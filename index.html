@@ -1,11 +1,122 @@
 <!DOCTYPE html>
 <html lang="hr">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bilješke</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bilješke</title>
+<style>
+  :root { --bg:#fafafa; --fg:#1c1c1e; --muted:#8e8e93; --card:#fff; --accent:#3b82f6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#121212; --fg:#eee; --muted:#888; --card:#1e1e1e; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  header { display:flex; justify-content:space-between; align-items:center;
+           padding:16px; position:sticky; top:0; background:var(--bg); }
+  h1 { margin:0; font-size:1.4rem; }
+  button { font:inherit; border:0; border-radius:10px; padding:10px 16px;
+           background:var(--accent); color:#fff; }
+  button.ghost { background:transparent; color:var(--accent); }
+  button.danger { background:transparent; color:#e11d48; }
+  #list { padding:0 16px 16px; display:grid; gap:10px; }
+  .note { background:var(--card); border-radius:12px; padding:14px; }
+  .note b { display:block; }
+  .note small { color:var(--muted); }
+  #editor { display:none; padding:16px; }
+  #editor input, #editor textarea { width:100%; font:inherit; color:var(--fg);
+    background:var(--card); border:0; border-radius:10px; padding:12px; margin-bottom:10px; }
+  #editor textarea { min-height:50vh; resize:vertical; }
+  .bar { display:flex; justify-content:space-between; }
+</style>
 </head>
 <body>
-  <h1>Bilješke rade ✅</h1>
+
+<div id="home">
+  <header>
+    <h1>Bilješke</h1>
+    <button id="newBtn">+ Nova</button>
+  </header>
+  <div id="list"></div>
+</div>
+
+<div id="editor">
+  <div class="bar">
+    <button class="ghost" id="doneBtn">← Gotovo</button>
+    <button class="danger" id="delBtn">Obriši</button>
+  </div>
+  <input id="title" placeholder="Naslov">
+  <textarea id="body" placeholder="Piši ovdje..."></textarea>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let db, current = null;
+
+function openDB() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open('biljeske', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('notes', { keyPath: 'id' });
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  });
+}
+const store = m => db.transaction('notes', m).objectStore('notes');
+const getAll = () => new Promise(res => { const r = store('readonly').getAll(); r.onsuccess = () => res(r.result); });
+const put = n => new Promise(res => { const r = store('readwrite').put(n); r.onsuccess = res; });
+const del = id => new Promise(res => { const r = store('readwrite').delete(id); r.onsuccess = res; });
+
+async function render() {
+  const notes = (await getAll()).sort((a, b) => b.updated - a.updated);
+  const list = $('list');
+  list.innerHTML = '';
+  if (!notes.length) list.innerHTML = '<p style="color:var(--muted)">Nema bilješki.</p>';
+  for (const n of notes) {
+    const el = document.createElement('div');
+    el.className = 'note';
+    const t = document.createElement('b');
+    t.textContent = n.title || 'Bez naslova';
+    const s = document.createElement('small');
+    s.textContent = (n.body || '').slice(0, 60);
+    el.append(t, s);
+    el.onclick = () => openEditor(n);
+    list.append(el);
+  }
+}
+
+function openEditor(n) {
+  current = n || { id: crypto.randomUUID(), title: '', body: '', updated: Date.now() };
+  $('title').value = current.title;
+  $('body').value = current.body;
+  $('home').style.display = 'none';
+  $('editor').style.display = 'block';
+}
+
+async function closeEditor() {
+  current.title = $('title').value.trim();
+  current.body = $('body').value;
+  current.updated = Date.now();
+  if (current.title || current.body) await put(current);
+  else await del(current.id);
+  $('editor').style.display = 'none';
+  $('home').style.display = 'block';
+  await render();
+}
+
+$('newBtn').onclick = () => openEditor();
+$('doneBtn').onclick = closeEditor;
+$('delBtn').onclick = async () => {
+  if (!confirm('Obrisati bilješku?')) return;
+  await del(current.id);
+  $('editor').style.display = 'none';
+  $('home').style.display = 'block';
+  await render();
+};
+
+(async () => {
+  db = await openDB();
+  if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+  render();
+})();
+</script>
 </body>
 </html>
