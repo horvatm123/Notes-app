@@ -2,6 +2,18 @@
 
 const $ = id => document.getElementById(id);
 const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
+// formatting options; names map to CSS variables (--t-*, --h-*) so dark mode can adjust them
+const TEXT_COLORS = [['red', 'Crvena'], ['orange', 'Narančasta'], ['green', 'Zelena'], ['blue', 'Plava'], ['purple', 'Ljubičasta'], ['gray', 'Siva']];
+const HL_COLORS = [['yellow', 'Žuta'], ['green', 'Zelena'], ['blue', 'Plava'], ['pink', 'Ružičasta'], ['orange', 'Narančasta']];
+const UL_COLORS = [['fg', 'Obična'], ...TEXT_COLORS];
+const SIZES = [['s', 'Mala', '.85em'], ['', 'Normalna', '1em'], ['l', 'Velika', '1.25em'], ['xl', 'Najveća', '1.55em']];
+const LISTS = [['bullet', '•', 'Točke'], ['number', '1.', 'Brojevi'], ['dash', '–', 'Crtice'], ['arrow', '→', 'Strelice']];
+const STYLE_VALUES = {
+  'data-c': new Set(TEXT_COLORS.map(c => c[0])),
+  'data-h': new Set(HL_COLORS.map(c => c[0])),
+  'data-u': new Set(UL_COLORS.map(c => c[0])),
+  'data-fs': new Set(['s', 'l', 'xl']),
+};
 const MAX_IMG = 1280;          // longest image side in px after resizing
 const SAVE_DELAY = 600;        // ms of inactivity before autosave
 const KDF_ITERATIONS = 600000; // PBKDF2 rounds: makes PIN guessing slow
@@ -28,6 +40,12 @@ const ICONS = {
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   notes: '<rect x="5" y="3.5" width="14" height="17" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  pen: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+  down: '<path d="M6 9l6 6 6-6"/>',
+  photo: '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.7"/><path d="M20.5 16.5l-5-5L7 19"/>',
+  list: '<circle cx="5" cy="6.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="5" cy="17.5" r="1.2" fill="currentColor" stroke="none"/><path d="M9.5 6.5H20M9.5 12H20M9.5 17.5H20"/>',
+  checklist: '<rect x="3.5" y="4" width="6.5" height="6.5" rx="1.6"/><path d="M5.2 7.3l1.3 1.3 2-2.3"/><rect x="3.5" y="13.5" width="6.5" height="6.5" rx="1.6"/><path d="M13.5 7.3H20.5M13.5 16.8H20.5"/>',
+  highlight: '<path d="M14.5 4.5l5 5-8 8H7v-4.5z"/><path d="M12 7l5 5"/>',
   home: '<path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h11V9.5"/><path d="M10 20v-5h4v5"/>',
 };
 const icon = name =>
@@ -151,15 +169,17 @@ function sanitize(html) {
         const keep =
           (tag === 'IMG' && a.name === 'src' && /^data:image\/(png|jpeg|gif|webp);base64,/i.test(a.value)) ||
           (tag === 'IMG' && a.name === 'alt') ||
-          (tag === 'UL' && a.name === 'class' && a.value === 'todo') ||
+          (tag === 'UL' && a.name === 'class' && /^(todo|dash|arrow)$/.test(a.value)) ||
+          (tag === 'SPAN' && STYLE_VALUES[a.name]?.has(a.value)) ||
           (tag === 'LI' && a.name === 'data-checked' && a.value === 'true');
         if (!keep) e.removeAttribute(a.name);
       }
       if (tag === 'IMG' && !e.hasAttribute('src')) e.remove();
+      else if (tag === 'SPAN' && !e.attributes.length) e.replaceWith(...e.childNodes);   // plain span adds nothing
     }
   };
   walk(doc.body);
-  return doc.body.innerHTML;
+  return doc.body.innerHTML.replace(/\u200B/g, '');   // remove caret helper characters
 }
 
 function toast(msg) {
@@ -537,13 +557,15 @@ function renderTabs() {
   const home = tab('home', 'Bilješke izvan mapa');
   home.classList.add('home');
   home.innerHTML = icon('home');
-  tab('all', 'Sve bilješke').textContent = 'Sve';
   for (const f of folders) {
     const b = tab(f.id, 'Mapa ' + f.name);
     const d = el('span', 'dot');
     d.style.background = f.color;
     b.append(d, f.name);
   }
+  const all = tab('all', 'Sve bilješke');      // last, pushed to the right edge
+  all.classList.add('all');
+  all.textContent = 'Sve';
   box.querySelector('.active')?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
 }
 
@@ -817,6 +839,7 @@ function openEditor(n, key) {
   $('body').innerHTML = sanitize(noteHtml(current));
   $('saveState').textContent = '';
   $('lockBadge').hidden = !currentKey;
+  showTools(false);
 
   pushLayer(closeEditor);
   show('editor');
@@ -847,7 +870,7 @@ async function saveCurrent() {
   if (!current) return;
   const bodyEl = $('body');
   const html = sanitize(bodyEl.innerHTML);
-  const text = bodyEl.innerText.trim();
+  const text = bodyEl.innerText.replace(/\u200B/g, '').trim();
   const images = bodyEl.querySelectorAll('img').length;
   const title = $('title').value.trim();
   current = { ...current, title, html, body: text, images, updated: Date.now() };
@@ -896,50 +919,246 @@ function ensureCaret() {
   }
 }
 
-function toggleTodo() {
-  let li = selectionElement()?.closest('li');
-  if (li && li.parentElement.tagName === 'UL') {
-    li.parentElement.classList.toggle('todo');
+const MARK = 'x-mark-font';      // temporary font name used to find the selected text
+
+const elementOf = n => (n && (n.nodeType === Node.ELEMENT_NODE ? n : n.parentElement));
+// element at the caret, also when the editor lost focus (e.g. a toolbar tap)
+function caretElement() {
+  const e = selectionElement() || (lastRange && elementOf(lastRange.startContainer));
+  return e && $('body').contains(e) ? e : null;
+}
+
+/* Wraps the selected text in plain <span>s and returns them.
+   With nothing selected, an empty span is placed at the caret so new typing goes into it. */
+function markSelection() {
+  ensureCaret();
+  const sel = getSelection();
+  const r = sel.getRangeAt(0);
+  if (r.collapsed) {
+    const s = document.createElement('span');
+    s.textContent = '​';           // zero-width space keeps the caret inside the span
+    r.insertNode(s);
+    const nr = document.createRange();
+    nr.setStart(s.firstChild, 1);
+    nr.collapse(true);
+    sel.removeAllRanges();
+    sel.addRange(nr);
+    return [s];
+  }
+  // the browser splits the selection across paragraphs and list items for us
+  document.execCommand('styleWithCSS', false, false);
+  document.execCommand('fontName', false, MARK);
+  const spans = [];
+  for (const f of $('body').querySelectorAll('font')) {
+    if (f.getAttribute('face') !== MARK) continue;
+    const s = document.createElement('span');
+    s.append(...f.childNodes);
+    f.replaceWith(s);
+    spans.push(s);
+  }
+  if (spans.length) {
+    const nr = document.createRange();
+    nr.setStartBefore(spans[0]);
+    nr.setEndAfter(spans[spans.length - 1]);
+    sel.removeAllRanges();
+    sel.addRange(nr);
+  }
+  return spans;
+}
+
+function unwrap(e) { e.replaceWith(...e.childNodes); }
+
+// Moves `node` out of its ancestor `anc`, splitting anc into a part before and a part after
+function splitOut(node, anc) {
+  const r = document.createRange();
+  r.setStartAfter(node);
+  r.setEnd(anc, anc.childNodes.length);
+  const tail = r.extractContents();
+  r.setStartBefore(node);
+  r.setEnd(anc, anc.childNodes.length);
+  const mid = r.extractContents();       // node itself is moved, wrappers between are copied
+  const after = anc.cloneNode(false);
+  after.append(tail);
+  anc.after(mid, after);
+  const isEmpty = e => !e.textContent.replace(/​/g, '') && !e.querySelector('img');
+  if (isEmpty(after)) after.remove();
+  if (isEmpty(anc)) anc.remove();
+}
+
+/* Sets one text style (data-c, data-h, data-u, data-fs) on the selection.
+   value null removes it. Each span carries only one style, so styles never stack up. */
+function applyStyle(attr, value) {
+  const spans = markSelection();
+  for (const m of spans) {
+    for (const d of [...m.querySelectorAll(`span[${attr}]`)]) unwrap(d);
+    let a;
+    while ((a = m.parentElement.closest(`span[${attr}]`)) && $('body').contains(a)) splitOut(m, a);
+    if (value) m.setAttribute(attr, value);
+  }
+  markDirty();
+  updateToolbar();
+}
+
+function listKind(list) {
+  if (!list) return null;
+  if (list.tagName === 'OL') return 'number';
+  for (const k of ['todo', 'dash', 'arrow']) if (list.classList.contains(k)) return k;
+  return 'bullet';
+}
+
+// kind: bullet | number | dash | arrow | todo. Choosing the current kind removes the list.
+function setList(kind) {
+  ensureCaret();
+  const list = selectionElement()?.closest('li')?.parentElement;
+  const cur = listKind(list);
+  const want = kind === 'number' ? 'OL' : 'UL';
+  let target = list;
+  if (cur === kind) {
+    document.execCommand(want === 'OL' ? 'insertOrderedList' : 'insertUnorderedList');
+    target = null;
+  } else if (!list) {
+    document.execCommand(want === 'OL' ? 'insertOrderedList' : 'insertUnorderedList');
+    target = selectionElement()?.closest('li')?.parentElement;
+  } else if (list.tagName !== want) {
+    // switch the whole list between <ul> and <ol>, keeping the caret where it was
+    const r = getSelection().getRangeAt(0);
+    const [sc, so, ec, eo] = [r.startContainer, r.startOffset, r.endContainer, r.endOffset];
+    target = document.createElement(want);
+    target.append(...list.childNodes);
+    list.replaceWith(target);
+    const nr = document.createRange();
+    nr.setStart(sc, so);
+    nr.setEnd(ec, eo);
+    getSelection().removeAllRanges();
+    getSelection().addRange(nr);
+  }
+  if (target) {
+    target.removeAttribute('class');
+    if (want === 'UL' && kind !== 'bullet') target.classList.add(kind);
+  }
+  markDirty();
+  updateToolbar();
+}
+
+/* Toolbar (hidden behind the pencil) and its option panels */
+let panelCmd = null;
+
+function showTools(open) {
+  closePanel();
+  $('tools').hidden = !open;
+  $('penBtn').hidden = open;
+  if (open) updateToolbar();
+}
+
+function closePanel() {
+  panelCmd = null;
+  $('toolPanel').hidden = true;
+  for (const b of $('toolbar').querySelectorAll('.open')) b.classList.remove('open');
+}
+
+const PANEL_ATTR = { underline: 'data-u', color: 'data-c', highlight: 'data-h', size: 'data-fs' };
+
+function currentValue(cmd) {
+  const e = caretElement();
+  if (cmd === 'list') {
+    const k = listKind(e?.closest('li')?.parentElement);
+    return k === 'todo' ? null : k;
+  }
+  const attr = PANEL_ATTR[cmd];
+  return e?.closest(`span[${attr}]`)?.getAttribute(attr) || '';
+}
+
+function openPanel(cmd) {
+  if (panelCmd === cmd) return closePanel();
+  closePanel();
+  panelCmd = cmd;
+  $('toolbar').querySelector(`[data-cmd="${cmd}"]`).classList.add('open');
+  const p = $('toolPanel');
+  p.replaceChildren();
+  p.hidden = false;
+  p.append(el('div', 'panel-title',
+    { underline: 'Podcrtavanje', color: 'Boja slova', highlight: 'Isticanje', size: 'Veličina slova', list: 'Popis' }[cmd]));
+  const row = el('div', 'panel-row');
+  p.append(row);
+  const cur = currentValue(cmd);
+  const opt = (cls, label, active, onClick) => {
+    const b = el('button', 'opt ' + cls + (active ? ' active' : ''));
+    b.type = 'button';
+    b.title = label;
+    b.setAttribute('aria-label', label);
+    b.onclick = () => { onClick(); closePanel(); };
+    row.append(b);
+    return b;
+  };
+  const attr = PANEL_ATTR[cmd];
+
+  if (cmd === 'size') {
+    for (const [v, label, size] of SIZES) {
+      const b = opt('text-opt', label, cur === v, () => applyStyle(attr, v || null));
+      b.textContent = label;
+      b.style.fontSize = size;
+    }
+  } else if (cmd === 'list') {
+    for (const [v, glyph, label] of LISTS) {
+      const b = opt('text-opt', label, cur === v, () => setList(v));
+      b.append(el('span', 'glyph', glyph), label);
+    }
   } else {
-    document.execCommand('insertUnorderedList');
-    li = selectionElement()?.closest('li');
-    if (li && li.parentElement.tagName === 'UL') li.parentElement.classList.add('todo');
+    opt('swatch none', cmd === 'color' ? 'Zadana boja' : 'Bez', !cur, () => applyStyle(attr, null));
+    const colors = cmd === 'highlight' ? HL_COLORS : cmd === 'underline' ? UL_COLORS : TEXT_COLORS;
+    for (const [v, label] of colors) {
+      const b = opt('swatch', label, cur === v, () => applyStyle(attr, v));
+      if (cmd === 'underline') {      // underline: show a "U" underlined in that color
+        b.classList.add('u-swatch');
+        b.textContent = 'U';
+        b.style.textDecoration = `underline 3px var(--t-${v})`;
+        b.style.textUnderlineOffset = '4px';
+      } else {
+        b.style.background = `var(--${cmd === 'highlight' ? 'h' : 't'}-${v})`;
+      }
+    }
   }
 }
 
-function toggleHeading() {
-  const inHeading = selectionElement()?.closest('h1,h2,h3');
-  document.execCommand('formatBlock', false, inHeading ? 'div' : 'h2');
-}
-
 function runCmd(cmd) {
-  if (cmd === 'image') { $('imgInput').click(); return; }
+  if (cmd === 'close') { showTools(false); return; }
+  if (cmd === 'image') { closePanel(); $('imgInput').click(); return; }
+  if (PANEL_ATTR[cmd] || cmd === 'list') { openPanel(cmd); return; }
+  closePanel();
   ensureCaret();
   switch (cmd) {
-    case 'bold': document.execCommand('bold'); break;
-    case 'italic': document.execCommand('italic'); break;
-    case 'heading': toggleHeading(); break;
-    case 'ul': document.execCommand('insertUnorderedList'); break;
-    case 'ol': document.execCommand('insertOrderedList'); break;
-    case 'todo': toggleTodo(); break;
+    case 'bold':
+    case 'italic':
+      document.execCommand('styleWithCSS', false, false);
+      document.execCommand(cmd);
+      break;
+    case 'todo': setList('todo'); return;
   }
   markDirty();
   updateToolbar();
 }
 
 function updateToolbar() {
+  if ($('tools').hidden) return;
   const e = selectionElement();
-  const ul = e?.closest('ul');
-  const state = {
+  const kind = listKind(e?.closest('li')?.parentElement);
+  const on = {
     bold: !!e && document.queryCommandState('bold'),
     italic: !!e && document.queryCommandState('italic'),
-    heading: !!e?.closest('h1,h2,h3'),
-    ul: !!ul && !ul.classList.contains('todo'),
-    ol: !!e?.closest('ol'),
-    todo: !!ul && ul.classList.contains('todo'),
+    list: !!kind && kind !== 'todo',
+    todo: kind === 'todo',
+    underline: !!currentValue('underline'),
+    size: !!currentValue('size'),
   };
-  for (const b of $('toolbar').querySelectorAll('button[data-cmd]'))
-    b.classList.toggle('on', !!state[b.dataset.cmd]);
+  for (const b of $('toolbar').querySelectorAll('button[data-cmd]')) b.classList.toggle('on', !!on[b.dataset.cmd]);
+  // color bars show the style at the caret
+  const bar = (cmd, prefix, fallback) => {
+    const v = currentValue(cmd);
+    $('toolbar').querySelector(`[data-cmd="${cmd}"] .ind`).style.background = v ? `var(--${prefix}-${v})` : fallback;
+  };
+  bar('color', 't', 'var(--fg)');
+  bar('highlight', 'h', 'var(--muted)');
+  bar('underline', 't', 'var(--fg)');
 }
 
 /* Images: shrink before storing, so notes stay small */
@@ -1080,8 +1299,11 @@ document.addEventListener('selectionchange', () => {
   updateToolbar();
 });
 
-// keep focus in the editor when tapping toolbar buttons
-$('toolbar').addEventListener('mousedown', e => e.preventDefault());
+// keep focus (and the on-screen keyboard) in the editor when tapping the tools
+$('tools').addEventListener('mousedown', e => e.preventDefault());
+$('penBtn').addEventListener('mousedown', e => e.preventDefault());
+$('penBtn').onclick = () => showTools(true);
+bodyEl.addEventListener('pointerdown', () => closePanel());
 $('toolbar').addEventListener('click', e => {
   const b = e.target.closest('button[data-cmd]');
   if (b) runCmd(b.dataset.cmd);

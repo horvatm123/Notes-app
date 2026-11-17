@@ -48,14 +48,21 @@
   <div id="body" class="rich" contenteditable="true" role="textbox" aria-multiline="true"
        data-placeholder="Piši ovdje…"></div>
 
-  <div id="toolbar" class="toolbar" role="toolbar" aria-label="Formatiranje">
-    <button type="button" data-cmd="bold" aria-label="Podebljano"><b>B</b></button>
-    <button type="button" data-cmd="italic" aria-label="Kurziv"><i>I</i></button>
-    <button type="button" data-cmd="heading" aria-label="Naslov">H</button>
-    <button type="button" data-cmd="ul" aria-label="Popis s točkama">•</button>
-    <button type="button" data-cmd="ol" aria-label="Numerirani popis">1.</button>
-    <button type="button" data-cmd="todo" aria-label="Popis zadataka">☑</button>
-    <button type="button" data-cmd="image" aria-label="Dodaj sliku">Slika</button>
+  <button id="penBtn" class="pen-fab" type="button" aria-label="Alati za oblikovanje" data-icon="pen"></button>
+  <div id="tools" class="tools" hidden>
+    <div id="toolPanel" class="tool-panel" hidden></div>
+    <div id="toolbar" class="toolbar" role="toolbar" aria-label="Oblikovanje">
+      <button type="button" data-cmd="close" aria-label="Sakrij alate" data-icon="down"></button>
+      <button type="button" data-cmd="bold" aria-label="Podebljano"><b>B</b></button>
+      <button type="button" data-cmd="italic" aria-label="Kurziv"><i class="i-glyph">I</i></button>
+      <button type="button" data-cmd="underline" aria-label="Podcrtavanje u boji"><span class="u-glyph">U</span><span class="ind"></span></button>
+      <button type="button" data-cmd="color" aria-label="Boja slova"><span class="a-glyph">A</span><span class="ind"></span></button>
+      <button type="button" data-cmd="highlight" aria-label="Isticanje"><span data-icon="highlight"></span><span class="ind"></span></button>
+      <button type="button" data-cmd="size" aria-label="Veličina slova"><span class="size-glyph">A<small>A</small></span></button>
+      <button type="button" data-cmd="list" aria-label="Popis"><span data-icon="list"></span></button>
+      <button type="button" data-cmd="todo" aria-label="Popis zadataka"><span data-icon="checklist"></span></button>
+      <button type="button" data-cmd="image" aria-label="Dodaj sliku"><span data-icon="photo"></span></button>
+    </div>
   </div>
   <input id="imgInput" type="file" accept="image/*" hidden>
 </section>
