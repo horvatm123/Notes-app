@@ -215,3 +215,16 @@ $('fDel').onclick = async () => {
   for (const n of notes) if (n.folderId === curFolder.id) { n.folderId = null; await put('notes', n); }
   await del('folders', curFolder.id);
   filter = 'all';
+  show('home');
+  await render();
+};
+
+// Start the app
+(async () => {
+  db = await openDB();
+  await render();
+  show('home');
+})();
+</script>
+</body>
+</html>
