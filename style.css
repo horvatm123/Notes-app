@@ -256,6 +256,8 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   font-size: 1.1rem;
 }
 .toolbar button svg { width: 21px; height: 21px; }
+/* icon wrappers must not add a text line box, otherwise the icon sits too high */
+.toolbar button > span[data-icon], .lock-badge > span[data-icon] { display: grid; place-items: center; }
 .toolbar button.on, .toolbar button.open { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
 .toolbar .close-btn {
   width: 40px; height: 40px; margin-left: 4px;

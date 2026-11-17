@@ -14,7 +14,7 @@ const STYLE_VALUES = {
   'data-u': new Set(UL_COLORS.map(c => c[0])),
   'data-fs': new Set(['s', 'l', 'xl']),
 };
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.0.1';
 const MAX_IMG = 1280;          // longest image side in px after resizing
 const SAVE_DELAY = 600;        // ms of inactivity before autosave
 const KDF_ITERATIONS = 600000; // PBKDF2 rounds: makes PIN guessing slow
