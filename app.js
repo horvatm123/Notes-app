@@ -14,6 +14,7 @@ const STYLE_VALUES = {
   'data-u': new Set(UL_COLORS.map(c => c[0])),
   'data-fs': new Set(['s', 'l', 'xl']),
 };
+const APP_VERSION = '1.0.0';
 const MAX_IMG = 1280;          // longest image side in px after resizing
 const SAVE_DELAY = 600;        // ms of inactivity before autosave
 const KDF_ITERATIONS = 600000; // PBKDF2 rounds: makes PIN guessing slow
@@ -41,6 +42,8 @@ const ICONS = {
   notes: '<rect x="5" y="3.5" width="14" height="17" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   pen: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
+  download: '<path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14"/>',
+  upload: '<path d="M12 15V4M7.5 8.5L12 4l4.5 4.5M5 19.5h14"/>',
   close: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
   photo: '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.7"/><path d="M20.5 16.5l-5-5L7 19"/>',
   list: '<circle cx="5" cy="6.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="5" cy="17.5" r="1.2" fill="currentColor" stroke="none"/><path d="M9.5 6.5H20M9.5 12H20M9.5 17.5H20"/>',
@@ -347,6 +350,28 @@ function passwordSheet({ title, text, fields, confirmLabel, isNew, onSubmit }) {
   });
 }
 
+// Yes/no question in the bottom sheet; resolves true when confirmed
+function confirmSheet({ title, text, confirmLabel, danger }) {
+  return new Promise(resolve => {
+    let ok = false;
+    showSheet(sh => {
+      const box = el('div', 'pw-form confirm');
+      box.append(el('h3', null, title));
+      if (text) box.append(el('p', null, text));
+      const cancel = el('button', 'secondary', 'Odustani');
+      cancel.type = 'button';
+      cancel.onclick = () => back();
+      const yes = el('button', danger ? 'danger-fill' : null, confirmLabel);
+      yes.type = 'button';
+      yes.onclick = () => { ok = true; back(); };
+      const actions = el('div', 'actions');
+      actions.append(cancel, yes);
+      box.append(actions);
+      sh.append(box);
+    }, () => resolve(ok));
+  });
+}
+
 /* ---------------- PIN dialog (iPhone style) ---------------- */
 
 let pinOpen = false;
@@ -561,7 +586,7 @@ function renderTabs() {
     const b = tab(f.id, 'Mapa ' + f.name);
     const d = el('span', 'dot');
     d.style.background = f.color;
-    b.append(d, f.name);
+    b.append(d, el('span', 'label', f.name));
   }
   const all = tab('all', 'Sve bilješke');      // last, pushed to the right edge
   all.classList.add('all');
@@ -698,6 +723,16 @@ async function openDrawer() {
   add.append(pickBtn('plus', 'Nova mapa', null, async () => { await back(); openFolderEd(); }));
   box.append(add);
 
+  // backup
+  box.append(el('h4', 'drawer-sub', 'Sigurnosna kopija'));
+  const last = Number(loadPref('lastBackup', 0));
+  const exp = row(false);
+  exp.append(pickBtn('download', 'Izvezi kopiju', null, async () => { await back(); exportBackup(); }));
+  exp.querySelector('.pick').append(el('span', 'count', last ? formatDate(last) : 'nikad'));
+  const imp = row(false);
+  imp.append(pickBtn('upload', 'Uvezi kopiju', null, () => { $('importInput').click(); back(); }));
+  box.append(exp, imp, el('p', 'version', 'Bilješke · verzija ' + APP_VERSION));
+
   drawerOpen = true;
   $('drawer').classList.add('open');
   updateScrim();
@@ -805,11 +840,112 @@ async function unlockNote(n) {
 }
 
 async function deleteNote(n) {
-  await closeSheet();
-  if (!confirm(`Obrisati bilješku „${n.title || 'Bez naslova'}”?`)) return;
+  const ok = await confirmSheet({
+    title: 'Obrisati bilješku?',
+    text: `„${n.title || 'Bez naslova'}” će biti trajno obrisana.`,
+    confirmLabel: 'Obriši',
+    danger: true,
+  });
+  if (!ok) return;
   await del('notes', n.id);
   toast('Bilješka je obrisana');
   render();
+}
+
+/* ---------------- Backup (export / import) ----------------
+   One JSON file with all notes, folders and the PIN check.
+   Locked notes stay encrypted inside the file; open notes are readable. */
+
+function toB64(bytes) {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(bin);
+}
+function fromB64(str) {
+  const bin = atob(str);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+// binary data (salt, IV, encrypted content) is written as { $b64: "..." }
+const backupReplacer = (k, v) =>
+  v instanceof ArrayBuffer ? { $b64: toB64(new Uint8Array(v)) }
+  : ArrayBuffer.isView(v) ? { $b64: toB64(new Uint8Array(v.buffer, v.byteOffset, v.byteLength)) }
+  : v;
+const backupReviver = (k, v) =>
+  v && typeof v === 'object' && typeof v.$b64 === 'string' ? fromB64(v.$b64) : v;
+
+async function exportBackup() {
+  const data = {
+    app: 'biljeske', format: 1, version: APP_VERSION, exported: Date.now(),
+    notes: await getAll('notes'), folders: await getAll('folders'), meta: await getAll('meta'),
+  };
+  const blob = new Blob([JSON.stringify(data, backupReplacer)], { type: 'application/json' });
+  const a = el('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `biljeske-kopija-${new Date().toISOString().slice(0, 10)}.json`;
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+  savePref('lastBackup', String(Date.now()));
+  toast('Kopija je spremljena u Preuzimanja');
+}
+
+async function importBackup(file) {
+  let data;
+  try {
+    data = JSON.parse(await file.text(), backupReviver);
+  } catch {
+    data = null;
+  }
+  if (data?.app !== 'biljeske' || !Array.isArray(data.notes) || !Array.isArray(data.folders)) {
+    toast('Ovo nije ispravna kopija bilješki');
+    return;
+  }
+  const ok = await confirmSheet({
+    title: 'Uvesti kopiju?',
+    text: `Kopija sadrži ${data.notes.length} bilješki i ${data.folders.length} mapa. Postojeće bilješke ostaju. ` +
+          'Ako ista bilješka postoji na oba mjesta, zadržava se novija verzija.',
+    confirmLabel: 'Uvezi',
+  });
+  if (!ok) return;
+
+  const localNotes = new Map((await getAll('notes')).map(n => [n.id, n]));
+  const localFolders = new Set((await getAll('folders')).map(f => f.id));
+  const localLock = await getOne('meta', 'lock');
+  const backupLock = (data.meta || []).find(m => m && m.id === 'lock' && m.salt && m.check);
+  const sameLock = !!(localLock && backupLock && toB64(localLock.salt) === toB64(backupLock.salt));
+  const localHasLocked = [...localNotes.values()].some(n => n.locked);
+  // take over the PIN from the backup only if no local note depends on the current one
+  const adoptLock = !!backupLock && !sameLock && !localHasLocked;
+  const lockedUsable = !backupLock || sameLock || adoptLock;
+
+  let added = 0, skipped = 0;
+  const t = db.transaction(['notes', 'folders', 'meta'], 'readwrite');
+  for (const f of data.folders) {
+    if (!f || typeof f.id !== 'string' || typeof f.name !== 'string' || localFolders.has(f.id)) continue;
+    t.objectStore('folders').put({ id: f.id, name: f.name.slice(0, 40), color: COLORS.includes(f.color) ? f.color : COLORS[5] });
+  }
+  for (const n of data.notes) {
+    if (!n || typeof n.id !== 'string' || typeof n.updated !== 'number') continue;
+    if (n.locked && (!n.enc || !lockedUsable)) { skipped++; continue; }
+    const cur = localNotes.get(n.id);
+    if (cur && cur.updated >= n.updated) continue;
+    const note = {
+      id: n.id, title: String(n.title || ''), folderId: typeof n.folderId === 'string' ? n.folderId : null,
+      updated: n.updated, images: Number(n.images) || 0,
+      body: n.locked ? '' : String(n.body || ''),
+      html: n.locked ? '' : sanitize(String(n.html ?? textToHtml(n.body || ''))),
+    };
+    if (n.locked) { note.locked = true; note.enc = n.enc; note.images = 0; }
+    t.objectStore('notes').put(note);
+    added++;
+  }
+  if (adoptLock) t.objectStore('meta').put(backupLock);
+  await new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); });
+  await render();
+  toast(`Uvezeno bilješki: ${added}` + (skipped ? ` · preskočeno zaključanih: ${skipped} (drugi PIN)` : ''));
 }
 
 /* ---------------- Editor ---------------- */
@@ -1183,7 +1319,7 @@ async function insertImage(file) {
   try {
     url = await fileToDataUrl(file);
   } catch {
-    alert('Ova slika se ne može učitati.');
+    toast('Ova slika se ne može učitati');
     return;
   }
   ensureCaret();
@@ -1340,19 +1476,45 @@ if (window.visualViewport) {
 $('fCancel').onclick = () => back();
 $('fSave').onclick = async () => {
   curFolder.name = $('fName').value.trim();
-  if (!curFolder.name) { alert('Upiši ime mape.'); return; }
+  if (!curFolder.name) { toast('Upiši ime mape'); $('fName').focus(); return; }
   await put('folders', curFolder);
   setFilter(curFolder.id);
   await back();
 };
 $('fDel').onclick = async () => {
-  if (!confirm('Obrisati mapu? Bilješke u njoj ostaju, bez mape.')) return;
+  const ok = await confirmSheet({
+    title: 'Obrisati mapu?',
+    text: `Mapa „${curFolder.name}” se briše, a bilješke iz nje ostaju i prelaze u bilješke bez mape.`,
+    confirmLabel: 'Obriši mapu',
+    danger: true,
+  });
+  if (!ok) return;
   for (const n of await getAll('notes'))
     if (n.folderId === curFolder.id) { n.folderId = null; await put('notes', n); }
   await del('folders', curFolder.id);
   setFilter('home');
   await back();
 };
+
+$('importInput').addEventListener('change', async e => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (file) await importBackup(file);
+});
+
+/* App updates: a new service worker takes over in the background.
+   The page reloads itself when the user is on the list, not while writing. */
+let updateReady = false;
+function reloadIfUpdated() {
+  if (updateReady && view === 'home' && !layers.length) {
+    try { sessionStorage.setItem('justUpdated', '1'); } catch { /* ignore */ }
+    location.reload();
+  }
+}
+window.addEventListener('popstate', () => setTimeout(reloadIfUpdated, 300));
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') reloadIfUpdated();
+});
 
 /* ---------------- Start ---------------- */
 
@@ -1365,5 +1527,19 @@ $('fDel').onclick = async () => {
   history.replaceState({ depth: 0 }, '');
   show('home');
   await render();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  try {
+    if (sessionStorage.getItem('justUpdated')) {
+      sessionStorage.removeItem('justUpdated');
+      toast('Aplikacija je ažurirana');
+    }
+  } catch { /* ignore */ }
+  if ('serviceWorker' in navigator) {
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController) return;          // first install, nothing to update
+      updateReady = true;
+      reloadIfUpdated();
+    });
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
 })();

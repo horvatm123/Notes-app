@@ -74,7 +74,7 @@
     <button id="fDel" class="danger" type="button">Obriši mapu</button>
   </div>
   <h2 id="fTitle">Mapa</h2>
-  <input id="fName" placeholder="Ime mape" autocomplete="off">
+  <input id="fName" placeholder="Ime mape" autocomplete="off" maxlength="40">
   <div id="swatches"></div>
   <button id="fSave" class="primary" type="button">Spremi</button>
 </section>
@@ -96,6 +96,7 @@
   </div>
 </div>
 <div id="toast" class="toast" role="status"></div>
+<input id="importInput" type="file" accept=".json,application/json" hidden>
 
 <script src="app.js"></script>
 </body>

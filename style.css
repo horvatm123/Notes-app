@@ -111,7 +111,10 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   border-radius: var(--radius);
   padding: 14px 48px 14px 16px;
 }
-.mode-list .note b { display: block; font-size: 1.05rem; }
+.mode-list .note b {
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  font-size: 1.05rem; overflow-wrap: anywhere;
+}
 .mode-list .preview {
   color: var(--muted);
   margin-top: 2px;
@@ -443,6 +446,11 @@ input:focus-visible, select:focus-visible, button:focus-visible {
 .pw-form .error { color: var(--danger); min-height: 1.4em; margin: 0 0 10px; }
 .pw-form .actions { display: flex; gap: 10px; }
 .pw-form .actions button { flex: 1; padding: 13px; font-weight: 600; }
+.pw-form.confirm { padding-top: 4px; }
+.pw-form.confirm p { margin-bottom: 18px; }
+button.danger-fill { background: var(--danger); color: #fff; }
+.drawer-sub { margin: 22px 12px 4px; font-size: .8rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+.drawer .version { margin: 20px 12px 0; color: var(--muted); font-size: .8rem; }
 
 .toast {
   position: fixed; left: 50%; bottom: calc(96px + env(safe-area-inset-bottom)); z-index: 30;
@@ -472,6 +480,8 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   font-size: .95rem;
 }
 .tab.home { padding: 0 12px; }
+.tab { max-width: 190px; }
+.tab .label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab.all { margin-left: auto; }
 .tab svg { width: 20px; height: 20px; }
 .tab.active { background: var(--fg); color: var(--bg); border-color: var(--fg); }
