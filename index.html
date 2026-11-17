@@ -29,6 +29,7 @@
       <button id="searchClose" class="icon-btn" type="button" aria-label="Zatvori pretragu" data-icon="back"></button>
       <input id="search" type="search" placeholder="Pretraži bilješke…" aria-label="Pretraži bilješke" autocomplete="off">
     </div>
+    <nav id="tabs" class="tabs" aria-label="Mape"></nav>
   </header>
   <section id="list" class="list mode-list"></section>
   <button id="newBtn" class="fab" type="button" aria-label="Nova bilješka" data-icon="plus"></button>
@@ -78,6 +79,15 @@
   <nav id="folderList"></nav>
 </aside>
 <div id="sheet" class="sheet" role="dialog" aria-modal="true"></div>
+<div id="pin" class="pin" role="dialog" aria-modal="true" aria-labelledby="pinTitle">
+  <div id="pinCard" class="pin-card">
+    <h3 id="pinTitle"></h3>
+    <p id="pinText"></p>
+    <div id="pinDots" class="pin-dots" aria-hidden="true"></div>
+    <p id="pinError" class="pin-error" aria-live="assertive"></p>
+    <div id="pinPad" class="pin-pad"></div>
+  </div>
+</div>
 <div id="toast" class="toast" role="status"></div>
 
 <script src="app.js"></script>

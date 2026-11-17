@@ -4,7 +4,9 @@ const $ = id => document.getElementById(id);
 const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
 const MAX_IMG = 1280;          // longest image side in px after resizing
 const SAVE_DELAY = 600;        // ms of inactivity before autosave
-const KDF_ITERATIONS = 250000; // PBKDF2 rounds: makes password guessing slow
+const KDF_ITERATIONS = 600000; // PBKDF2 rounds: makes PIN guessing slow
+const LEGACY_ITERATIONS = 250000; // rounds used by the old text password (v2)
+const PIN_LENGTH = 6;
 const LOCK_AFTER_MS = 60000;   // an open locked note closes if the app was hidden longer than this
 
 /* ---------------- Icons (inline SVG) ---------------- */
@@ -26,6 +28,7 @@ const ICONS = {
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   notes: '<rect x="5" y="3.5" width="14" height="17" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  home: '<path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h11V9.5"/><path d="M10 20v-5h4v5"/>',
 };
 const icon = name =>
   `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" ` +
@@ -35,7 +38,7 @@ const icon = name =>
 
 let db;
 let folders = [];
-let filter = 'all';            // 'all' or folder id
+let filter = loadPref('filter', 'home');   // 'home' (no folder), 'all' or folder id
 let query = '';
 let searchOpen = false;
 let view = 'home';
@@ -193,7 +196,7 @@ window.addEventListener('popstate', async () => {
 });
 
 function updateScrim() {
-  $('scrim').classList.toggle('open', sheetOpen || drawerOpen);
+  $('scrim').classList.toggle('open', sheetOpen || drawerOpen || pinOpen);
 }
 
 /* ---------------- Encryption ----------------
@@ -203,10 +206,10 @@ function updateScrim() {
 const te = new TextEncoder();
 const td = new TextDecoder();
 
-async function deriveKey(password, salt) {
+async function deriveKey(password, salt, iterations = KDF_ITERATIONS) {
   const base = await crypto.subtle.importKey('raw', te.encode(password), 'PBKDF2', false, ['deriveKey']);
   return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt, iterations: KDF_ITERATIONS, hash: 'SHA-256' },
+    { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' },
     base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
 }
 
@@ -225,7 +228,7 @@ async function decryptJSON(key, enc) {
 async function tryPassword(password) {
   const lock = await getOne('meta', 'lock');
   if (!lock) return null;
-  const key = await deriveKey(password, lock.salt);
+  const key = await deriveKey(password, lock.salt, lock.iterations || LEGACY_ITERATIONS);
   try {
     await decryptJSON(key, lock.check);   // AES-GCM fails on a wrong key
     return key;
@@ -324,58 +327,235 @@ function passwordSheet({ title, text, fields, confirmLabel, isNew, onSubmit }) {
   });
 }
 
-function askPassword(title) {
-  return passwordSheet({
-    title,
-    text: 'Upiši lozinku za zaključane bilješke.',
-    fields: ['Lozinka'],
-    confirmLabel: 'Otključaj',
-    onSubmit: async ([pw]) => (await tryPassword(pw)) || 'Pogrešna lozinka.',
+/* ---------------- PIN dialog (iPhone style) ---------------- */
+
+let pinOpen = false;
+let pinStep = null;          // { title, text, onPin(pin) }
+let pinValue = '';
+let pinBusy = false;
+let pinResult = null;
+
+function buildPinPad() {
+  const pad = $('pinPad');
+  for (const k of ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'cancel', '0', 'del']) {
+    const b = el('button');
+    b.type = 'button';
+    if (k === 'cancel') {
+      b.className = 'text';
+      b.textContent = 'Odustani';
+      b.onclick = () => back();
+    } else if (k === 'del') {
+      b.className = 'text del';
+      b.textContent = '⌫';
+      b.setAttribute('aria-label', 'Obriši znamenku');
+      b.onclick = () => pinInput('del');
+    } else {
+      b.textContent = k;
+      b.dataset.d = k;
+      b.onclick = () => pinInput(k);
+    }
+    pad.append(b);
+  }
+}
+
+function drawPinDots() {
+  const box = $('pinDots');
+  box.replaceChildren();
+  for (let i = 0; i < PIN_LENGTH; i++) box.append(el('span', i < pinValue.length ? 'on' : ''));
+}
+
+function restartAnimation(e, cls) {
+  e.classList.remove('shake', 'swap');
+  void e.offsetWidth;          // forces the browser to restart the animation
+  e.classList.add(cls);
+}
+
+function setPinStep(step, error = '') {
+  pinStep = step;
+  pinValue = '';
+  $('pinTitle').textContent = step.title;
+  $('pinText').textContent = step.text || '';
+  $('pinError').textContent = error;
+  drawPinDots();
+}
+
+// Shows the dialog; resolves with the value of the last step, or null if cancelled
+function openPin(step) {
+  return new Promise(resolve => {
+    pinResult = null;
+    setPinStep(step);
+    $('pinCard').classList.remove('shake', 'swap');
+    pinOpen = true;
+    $('pin').classList.add('open');
+    updateScrim();
+    document.activeElement?.blur();     // hide the on-screen keyboard
+    pushLayer(() => {
+      pinOpen = false;
+      $('pin').classList.remove('open');
+      updateScrim();
+      pinValue = '';
+      drawPinDots();
+      resolve(pinResult);
+    });
   });
 }
 
-function setupPassword() {
-  return passwordSheet({
-    title: 'Postavi lozinku',
-    text: 'Ista lozinka vrijedi za sve zaključane bilješke. Ako je zaboraviš, zaključane bilješke se NE mogu vratiti.',
-    fields: ['Nova lozinka', 'Ponovi lozinku'],
-    confirmLabel: 'Postavi',
-    isNew: true,
-    onSubmit: async ([a, b]) => {
-      if (a.length < 4) return 'Lozinka mora imati barem 4 znaka.';
-      if (a !== b) return 'Lozinke se ne podudaraju.';
-      const salt = crypto.getRandomValues(new Uint8Array(16));
-      const key = await deriveKey(a, salt);
-      const check = await encryptJSON(key, { ok: true });
-      await put('meta', { id: 'lock', salt, check });
-      return key;
+// onPin returns { done: value } | { error } | { next: step } | { next, error }
+async function pinInput(d) {
+  if (!pinOpen || pinBusy) return;
+  if (d === 'del') {
+    pinValue = pinValue.slice(0, -1);
+    drawPinDots();
+    return;
+  }
+  if (pinValue.length >= PIN_LENGTH) return;
+  pinValue += d;
+  $('pinError').textContent = '';
+  drawPinDots();
+  if (pinValue.length < PIN_LENGTH) return;
+
+  pinBusy = true;
+  try {
+    await new Promise(r => setTimeout(r, 150));   // let the last dot show
+    const r = await pinStep.onPin(pinValue);
+    if ('done' in r) {
+      pinResult = r.done;
+      await back();
+    } else {
+      setPinStep(r.next || pinStep, r.error || '');
+      restartAnimation($('pinCard'), r.error ? 'shake' : 'swap');
+    }
+  } finally {
+    pinBusy = false;
+  }
+}
+
+// New PIN in two steps. Resolves with { key, record }; the caller saves the record.
+function setupPin() {
+  const first = {
+    title: 'Postavi PIN',
+    text: `Odaberi PIN od ${PIN_LENGTH} znamenki. Isti PIN vrijedi za sve zaključane bilješke. ` +
+          'Ako ga zaboraviš, zaključane bilješke se ne mogu vratiti.',
+    onPin: async pin => ({
+      next: {
+        title: 'Ponovi PIN',
+        text: 'Upiši isti PIN još jednom.',
+        onPin: async again => {
+          if (again !== pin) return { next: first, error: 'PIN-ovi se ne podudaraju. Pokušaj ponovno.' };
+          const salt = crypto.getRandomValues(new Uint8Array(16));
+          const key = await deriveKey(pin, salt);
+          const check = await encryptJSON(key, { ok: true });
+          return { done: { key, record: { id: 'lock', kind: 'pin', salt, iterations: KDF_ITERATIONS, check } } };
+        },
+      },
+    }),
+  };
+  return openPin(first);
+}
+
+function askPin(title) {
+  return openPin({
+    title,
+    text: 'Upiši PIN',
+    onPin: async pin => {
+      const key = await tryPassword(pin);
+      return key ? { done: key } : { error: 'Pogrešan PIN' };
     },
   });
 }
 
-// key for locking a note: first time asks to create the password
-async function keyForLocking() {
-  return (await getOne('meta', 'lock')) ? askPassword('Zaključaj bilješku') : setupPassword();
+// Notes locked with the old text password (v2) are re-encrypted with a new PIN
+async function migrateToPin() {
+  const oldKey = await passwordSheet({
+    title: 'Prijelaz na PIN',
+    text: 'Zaključavanje sada koristi PIN. Upiši staru lozinku još jednom, a zatim postavi novi PIN.',
+    fields: ['Stara lozinka'],
+    confirmLabel: 'Dalje',
+    onSubmit: async ([pw]) => (await tryPassword(pw)) || 'Pogrešna lozinka.',
+  });
+  if (!oldKey) return null;
+  const pin = await setupPin();
+  if (!pin) return null;
+  const updated = [];
+  for (const n of (await getAll('notes')).filter(x => x.locked))
+    updated.push({ ...n, enc: await encryptJSON(pin.key, await decryptJSON(oldKey, n.enc)) });
+  // one transaction: either everything switches to the new PIN or nothing does
+  await new Promise((res, rej) => {
+    const t = db.transaction(['notes', 'meta'], 'readwrite');
+    for (const n of updated) t.objectStore('notes').put(n);
+    t.objectStore('meta').put(pin.record);
+    t.oncomplete = res;
+    t.onerror = () => rej(t.error);
+  });
+  toast('PIN je postavljen');
+  return pin.key;
+}
+
+// Key for locked notes. allowSetup: create a PIN if none exists yet.
+async function getLockKey(title, allowSetup) {
+  let lock = await getOne('meta', 'lock');
+  if (lock && lock.kind !== 'pin') {
+    if ((await getAll('notes')).some(n => n.locked)) return migrateToPin();
+    await del('meta', 'lock');           // old password protects nothing, start with a PIN
+    lock = null;
+  }
+  if (lock) return askPin(title);
+  if (!allowSetup) return null;
+  const pin = await setupPin();
+  if (!pin) return null;
+  await put('meta', pin.record);
+  return pin.key;
 }
 
 /* ---------------- Home ---------------- */
 
+function setFilter(f) {
+  filter = f;
+  savePref('filter', f);
+}
+
 function renderHeader() {
   const f = folderById(filter);
-  $('homeTitle').textContent = f ? f.name : 'Sve bilješke';
+  $('homeTitle').textContent = f ? f.name : filter === 'all' ? 'Sve bilješke' : 'Bilješke';
   const next = viewMode === 'grid' ? 'list' : 'grid';
   $('viewBtn').innerHTML = icon(next);
   $('viewBtn').setAttribute('aria-label', next === 'grid' ? 'Prikaz mreže' : 'Prikaz popisa');
+  renderTabs();
+}
+
+function renderTabs() {
+  const box = $('tabs');
+  box.replaceChildren();
+  const tab = (id, label) => {
+    const b = el('button', 'tab' + (filter === id ? ' active' : ''));
+    b.type = 'button';
+    b.setAttribute('aria-label', label);
+    b.onclick = () => { setFilter(id); render(); };
+    box.append(b);
+    return b;
+  };
+  const home = tab('home', 'Bilješke izvan mapa');
+  home.classList.add('home');
+  home.innerHTML = icon('home');
+  tab('all', 'Sve bilješke').textContent = 'Sve';
+  for (const f of folders) {
+    const b = tab(f.id, 'Mapa ' + f.name);
+    const d = el('span', 'dot');
+    d.style.background = f.color;
+    b.append(d, f.name);
+  }
+  box.querySelector('.active')?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
 }
 
 async function render() {
   folders = (await getAll('folders')).sort((a, b) => a.name.localeCompare(b.name, 'hr'));
-  if (filter !== 'all' && !folderById(filter)) filter = 'all';
+  if (filter !== 'all' && filter !== 'home' && !folderById(filter)) setFilter('home');
   renderHeader();
 
   let notes = await getAll('notes');
   const q = searchOpen ? norm(query.trim()) : '';
   if (q) notes = notes.filter(n => norm(n.title + ' ' + (n.locked ? '' : n.body)).includes(q));   // search covers all folders
+  else if (filter === 'home') notes = notes.filter(n => !n.folderId);
   else if (filter !== 'all') notes = notes.filter(n => n.folderId === filter);
   notes.sort((a, b) => b.updated - a.updated);
 
@@ -383,8 +563,12 @@ async function render() {
   list.className = 'list mode-' + viewMode;
   list.replaceChildren();
   if (!notes.length) {
-    list.append(el('p', 'empty', q ? 'Ništa nije pronađeno.'
-      : searchOpen ? 'Upiši pojam za pretragu.' : 'Još nema bilješki. Dodaj prvu tipkom +'));
+    const msg = q ? 'Ništa nije pronađeno.'
+      : searchOpen ? 'Upiši pojam za pretragu.'
+      : filter === 'home' ? 'Nema bilješki izvan mapa. Dodaj novu tipkom +'
+      : filter === 'all' ? 'Još nema bilješki. Dodaj prvu tipkom +'
+      : 'Ova mapa je prazna. Dodaj bilješku tipkom +';
+    list.append(el('p', 'empty', msg));
     return;
   }
   const showFolder = filter === 'all' || !!q;
@@ -453,7 +637,7 @@ function gridCard(n, showFolder) {
 
 async function openDrawer() {
   const notes = await getAll('notes');
-  const count = id => notes.filter(n => n.folderId === id).length;
+  const count = id => notes.filter(n => (n.folderId || null) === id).length;
   const box = $('folderList');
   box.replaceChildren();
 
@@ -468,15 +652,17 @@ async function openDrawer() {
     return b;
   };
 
+  const home = row(filter === 'home');
+  home.append(pickBtn('home', 'Bilješke', count(null), async () => { setFilter('home'); await back(); render(); }));
   const all = row(filter === 'all');
-  all.append(pickBtn('notes', 'Sve bilješke', notes.length, async () => { filter = 'all'; await back(); render(); }));
-  box.append(all);
+  all.append(pickBtn('notes', 'Sve bilješke', notes.length, async () => { setFilter('all'); await back(); render(); }));
+  box.append(home, all);
 
   for (const f of folders) {
     const r = row(filter === f.id);
     const d = el('span', 'dot');
     d.style.background = f.color;
-    r.append(pickBtn(d, f.name, count(f.id), async () => { filter = f.id; await back(); render(); }));
+    r.append(pickBtn(d, f.name, count(f.id), async () => { setFilter(f.id); await back(); render(); }));
     const edit = el('button', 'icon-btn');
     edit.type = 'button';
     edit.innerHTML = icon('edit');
@@ -537,12 +723,14 @@ function openMoveSheet(n) {
 
 // plain text of a note, asks for the password if it is locked
 async function noteText(n, why) {
-  const fresh = await getOne('notes', n.id);
+  let fresh = await getOne('notes', n.id);
   if (!fresh) return null;
   let body = fresh.body || '';
   if (fresh.locked) {
-    const key = await askPassword(why);
+    await closeSheet();
+    const key = await getLockKey(why, false);
     if (!key) return null;
+    fresh = await getOne('notes', n.id);
     body = (await decryptJSON(key, fresh.enc)).body;
   }
   return { title: fresh.title || '', text: (fresh.title ? fresh.title + '\n\n' : '') + body };
@@ -572,7 +760,8 @@ async function copyNote(n) {
 }
 
 async function lockNote(n) {
-  const key = await keyForLocking();
+  await closeSheet();
+  const key = await getLockKey('Zaključaj bilješku', true);
   if (!key) return;
   const fresh = await getOne('notes', n.id);
   const enc = await encryptJSON(key, { html: noteHtml(fresh), body: fresh.body || '' });
@@ -583,7 +772,8 @@ async function lockNote(n) {
 }
 
 async function unlockNote(n) {
-  const key = await askPassword('Otključaj bilješku');
+  await closeSheet();
+  const key = await getLockKey('Otključaj bilješku', false);
   if (!key) return;
   const fresh = await getOne('notes', n.id);
   const data = await decryptJSON(key, fresh.enc);
@@ -606,10 +796,11 @@ async function openNote(n) {
   const fresh = await getOne('notes', n.id);
   if (!fresh) return render();
   if (!fresh.locked) return openEditor(fresh, null);
-  const key = await askPassword(fresh.title || 'Zaključana bilješka');
+  const key = await getLockKey(fresh.title || 'Zaključana bilješka', false);
   if (!key) return;
-  const data = await decryptJSON(key, fresh.enc);
-  openEditor({ ...fresh, html: data.html, body: data.body }, key);
+  const latest = await getOne('notes', n.id);     // re-read: a PIN migration may have re-encrypted it
+  const data = await decryptJSON(key, latest.enc);
+  openEditor({ ...latest, html: data.html, body: data.body }, key);
 }
 
 function openEditor(n, key) {
@@ -617,7 +808,7 @@ function openEditor(n, key) {
   current = n
     ? { ...n }
     : { id: crypto.randomUUID(), title: '', body: '', html: '', images: 0,
-        folderId: filter === 'all' ? null : filter, updated: Date.now() };
+        folderId: folderById(filter) ? filter : null, updated: Date.now() };
   currentKey = key || null;
   dirty = false;
   lastRange = null;
@@ -821,6 +1012,7 @@ $('searchBtn').onclick = () => {
   searchOpen = true;
   $('appbarMain').hidden = true;
   $('appbarSearch').hidden = false;
+  $('tabs').hidden = true;
   $('search').focus();
   render();
   pushLayer(() => {
@@ -829,6 +1021,7 @@ $('searchBtn').onclick = () => {
     $('search').value = '';
     $('appbarSearch').hidden = true;
     $('appbarMain').hidden = false;
+    $('tabs').hidden = false;
     render();
   });
 };
@@ -836,6 +1029,12 @@ $('searchClose').onclick = () => back();
 $('search').addEventListener('input', e => { query = e.target.value; render(); });
 $('scrim').onclick = () => back();
 document.addEventListener('keydown', e => {
+  if (pinOpen) {             // laptop: type the PIN with the keyboard
+    if (/^[0-9]$/.test(e.key)) { e.preventDefault(); pinInput(e.key); }
+    else if (e.key === 'Backspace') { e.preventDefault(); pinInput('del'); }
+    else if (e.key === 'Escape') { e.preventDefault(); back(); }
+    return;
+  }
   if (e.key === 'Escape' && (sheetOpen || drawerOpen)) { e.preventDefault(); back(); }
 });
 
@@ -921,7 +1120,7 @@ $('fSave').onclick = async () => {
   curFolder.name = $('fName').value.trim();
   if (!curFolder.name) { alert('Upiši ime mape.'); return; }
   await put('folders', curFolder);
-  filter = curFolder.id;
+  setFilter(curFolder.id);
   await back();
 };
 $('fDel').onclick = async () => {
@@ -929,7 +1128,7 @@ $('fDel').onclick = async () => {
   for (const n of await getAll('notes'))
     if (n.folderId === curFolder.id) { n.folderId = null; await put('notes', n); }
   await del('folders', curFolder.id);
-  filter = 'all';
+  setFilter('home');
   await back();
 };
 
@@ -937,6 +1136,7 @@ $('fDel').onclick = async () => {
 
 (async () => {
   for (const e of document.querySelectorAll('[data-icon]')) e.innerHTML = icon(e.dataset.icon);
+  buildPinPad();
   db = await openDB();
   // ask the browser not to auto-delete our data when storage is low
   navigator.storage?.persist?.().catch(() => {});
