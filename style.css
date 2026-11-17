@@ -224,19 +224,29 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   box-shadow: 0 6px 18px rgba(59, 130, 246, .45);
 }
 .pen-fab svg { width: 24px; height: 24px; }
-.tools { position: fixed; left: 0; right: 0; bottom: var(--kb); z-index: 3; }
+.tools {
+  position: fixed; z-index: 3;
+  left: 8px; right: 8px;
+  bottom: calc(var(--kb) + 14px + env(safe-area-inset-bottom));
+  display: flex; flex-direction: column; align-items: center;
+  pointer-events: none;            /* only the bubbles take taps */
+}
+.tools > * { pointer-events: auto; max-width: 100%; }
 .toolbar {
-  display: flex; justify-content: safe center; gap: 2px;
-  padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
+  display: flex; align-items: center; gap: 1px;
+  width: max-content;
+  padding: 5px 5px 5px 8px;
   background: var(--card);
-  border-top: 1px solid var(--line);
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, .2);
   overflow-x: auto; scrollbar-width: none;
 }
 .toolbar::-webkit-scrollbar { display: none; }
 .toolbar button {
   flex: none;
   position: relative;
-  width: 36px; height: 44px; padding: 0;
+  width: 33px; height: 42px; padding: 0;
   display: grid; place-items: center;
   background: transparent; color: var(--fg);
   border-radius: 10px;
@@ -244,6 +254,12 @@ input:focus-visible, select:focus-visible, button:focus-visible {
 }
 .toolbar button svg { width: 21px; height: 21px; }
 .toolbar button.on, .toolbar button.open { background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.toolbar .close-btn {
+  width: 40px; height: 40px; margin-left: 4px;
+  border-radius: 50%;
+  background: var(--accent); color: #fff;
+}
+.toolbar .close-btn svg { width: 20px; height: 20px; stroke-width: 2.4; }
 .toolbar .i-glyph { font-family: Georgia, serif; }
 .toolbar .u-glyph { text-decoration: underline; text-underline-offset: 3px; }
 .toolbar .a-glyph { font-weight: 600; }
@@ -258,7 +274,8 @@ input:focus-visible, select:focus-visible, button:focus-visible {
 .toolbar [data-cmd="underline"].on .ind { display: block; }
 
 .tool-panel {
-  margin: 0 8px 8px;
+  width: max-content;
+  margin: 0 0 8px;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: 18px;
@@ -274,8 +291,10 @@ input:focus-visible, select:focus-visible, button:focus-visible {
 }
 .opt.swatch.active { outline: 3px solid var(--accent); outline-offset: 2px; }
 .opt.swatch.none {
-  background: linear-gradient(135deg, transparent 46%, var(--danger) 46% 54%, transparent 54%);
+  display: grid; place-items: center;
+  background: var(--muted); color: #fff; border-color: transparent;
 }
+.opt.swatch.none svg { width: 18px; height: 18px; stroke-width: 2.6; }
 .opt.u-swatch { display: grid; place-items: center; font-weight: 600; font-size: 1.1rem; background: transparent; }
 .opt.text-opt {
   padding: 8px 12px; border-radius: 10px;
@@ -283,42 +302,53 @@ input:focus-visible, select:focus-visible, button:focus-visible {
   display: flex; align-items: center; gap: 8px;
 }
 .opt.text-opt.active { border-color: var(--accent); color: var(--accent); }
-.opt .glyph { width: 1.2em; text-align: center; font-weight: 600; }
+.opt.glyph-opt {
+  width: 46px; height: 42px; border-radius: 10px;
+  border: 1px solid var(--line);
+  font-size: 1.25rem; font-weight: 600;
+}
+.opt.glyph-opt.active { border-color: var(--accent); color: var(--accent); }
 
 /* text styles produced by the editor (also shown in thumbnails) */
 :root {
-  --t-red: #dc2626; --t-orange: #ea580c; --t-green: #16a34a;
-  --t-blue: #2563eb; --t-purple: #9333ea; --t-gray: #6b7280; --t-fg: var(--fg);
-  --h-yellow: #fde68a; --h-green: #bbf7d0; --h-blue: #bfdbfe;
-  --h-pink: #fbcfe8; --h-orange: #fed7aa;
+  --t-red: #e5121b; --h-red: #ffa8a8;
+  --t-blue: #0b63ff; --h-blue: #9ccaff;
+  --t-green: #00a33a; --h-green: #8cf0aa;
+  --t-yellow: #e0a800; --h-yellow: #ffe14d;
+  --t-orange: #ff6a00; --h-orange: #ffbe85;
+  --t-purple: #8a2cf5; --h-purple: #d9b5ff;
+  --t-fg: var(--fg);
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --t-red: #f87171; --t-orange: #fb923c; --t-green: #4ade80;
-    --t-blue: #60a5fa; --t-purple: #c084fc; --t-gray: #9ca3af;
-    --h-yellow: rgba(250, 204, 21, .38); --h-green: rgba(74, 222, 128, .3); --h-blue: rgba(96, 165, 250, .32);
-    --h-pink: rgba(244, 114, 182, .32); --h-orange: rgba(251, 146, 60, .34);
+    --t-red: #ff5252; --h-red: rgba(255,82,82,.45);
+    --t-blue: #4d8dff; --h-blue: rgba(77,141,255,.45);
+    --t-green: #2fe06c; --h-green: rgba(47,224,108,.38);
+    --t-yellow: #ffd60a; --h-yellow: rgba(255,214,10,.45);
+    --t-orange: #ff8c33; --h-orange: rgba(255,140,51,.45);
+    --t-purple: #b46cff; --h-purple: rgba(180,108,255,.45);
   }
 }
 .rich [data-c="red"] { color: var(--t-red); }
-.rich [data-c="orange"] { color: var(--t-orange); }
-.rich [data-c="green"] { color: var(--t-green); }
 .rich [data-c="blue"] { color: var(--t-blue); }
+.rich [data-c="green"] { color: var(--t-green); }
+.rich [data-c="yellow"] { color: var(--t-yellow); }
+.rich [data-c="orange"] { color: var(--t-orange); }
 .rich [data-c="purple"] { color: var(--t-purple); }
-.rich [data-c="gray"] { color: var(--t-gray); }
 .rich [data-h] { border-radius: .2em; padding: 0 .08em; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
-.rich [data-h="yellow"] { background: var(--h-yellow); }
-.rich [data-h="green"] { background: var(--h-green); }
+.rich [data-h="red"] { background: var(--h-red); }
 .rich [data-h="blue"] { background: var(--h-blue); }
-.rich [data-h="pink"] { background: var(--h-pink); }
+.rich [data-h="green"] { background: var(--h-green); }
+.rich [data-h="yellow"] { background: var(--h-yellow); }
 .rich [data-h="orange"] { background: var(--h-orange); }
+.rich [data-h="purple"] { background: var(--h-purple); }
 .rich [data-u] { text-decoration: underline; text-decoration-thickness: .12em; text-underline-offset: .18em; }
 .rich [data-u="red"] { text-decoration-color: var(--t-red); }
-.rich [data-u="orange"] { text-decoration-color: var(--t-orange); }
-.rich [data-u="green"] { text-decoration-color: var(--t-green); }
 .rich [data-u="blue"] { text-decoration-color: var(--t-blue); }
+.rich [data-u="green"] { text-decoration-color: var(--t-green); }
+.rich [data-u="yellow"] { text-decoration-color: var(--t-yellow); }
+.rich [data-u="orange"] { text-decoration-color: var(--t-orange); }
 .rich [data-u="purple"] { text-decoration-color: var(--t-purple); }
-.rich [data-u="gray"] { text-decoration-color: var(--t-gray); }
 .rich [data-fs="s"] { font-size: .82em; }
 .rich [data-fs="l"] { font-size: 1.3em; }
 .rich [data-fs="xl"] { font-size: 1.7em; line-height: 1.3; }

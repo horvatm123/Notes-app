@@ -3,8 +3,8 @@
 const $ = id => document.getElementById(id);
 const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
 // formatting options; names map to CSS variables (--t-*, --h-*) so dark mode can adjust them
-const TEXT_COLORS = [['red', 'Crvena'], ['orange', 'Narančasta'], ['green', 'Zelena'], ['blue', 'Plava'], ['purple', 'Ljubičasta'], ['gray', 'Siva']];
-const HL_COLORS = [['yellow', 'Žuta'], ['green', 'Zelena'], ['blue', 'Plava'], ['pink', 'Ružičasta'], ['orange', 'Narančasta']];
+const TEXT_COLORS = [['red', 'Crvena'], ['blue', 'Plava'], ['green', 'Zelena'], ['yellow', 'Žuta'], ['orange', 'Narančasta'], ['purple', 'Ljubičasta']];
+const HL_COLORS = TEXT_COLORS;
 const UL_COLORS = [['fg', 'Obična'], ...TEXT_COLORS];
 const SIZES = [['s', 'Mala', '.85em'], ['', 'Normalna', '1em'], ['l', 'Velika', '1.25em'], ['xl', 'Najveća', '1.55em']];
 const LISTS = [['bullet', '•', 'Točke'], ['number', '1.', 'Brojevi'], ['dash', '–', 'Crtice'], ['arrow', '→', 'Strelice']];
@@ -41,7 +41,7 @@ const ICONS = {
   notes: '<rect x="5" y="3.5" width="14" height="17" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   pen: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>',
-  down: '<path d="M6 9l6 6 6-6"/>',
+  close: '<path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>',
   photo: '<rect x="3.5" y="5" width="17" height="14" rx="2.5"/><circle cx="9" cy="10" r="1.7"/><path d="M20.5 16.5l-5-5L7 19"/>',
   list: '<circle cx="5" cy="6.5" r="1.2" fill="currentColor" stroke="none"/><circle cx="5" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="5" cy="17.5" r="1.2" fill="currentColor" stroke="none"/><path d="M9.5 6.5H20M9.5 12H20M9.5 17.5H20"/>',
   checklist: '<rect x="3.5" y="4" width="6.5" height="6.5" rx="1.6"/><path d="M5.2 7.3l1.3 1.3 2-2.3"/><rect x="3.5" y="13.5" width="6.5" height="6.5" rx="1.6"/><path d="M13.5 7.3H20.5M13.5 16.8H20.5"/>',
@@ -1100,11 +1100,11 @@ function openPanel(cmd) {
     }
   } else if (cmd === 'list') {
     for (const [v, glyph, label] of LISTS) {
-      const b = opt('text-opt', label, cur === v, () => setList(v));
-      b.append(el('span', 'glyph', glyph), label);
+      const b = opt('glyph-opt', label, cur === v, () => setList(v));
+      b.textContent = glyph;
     }
   } else {
-    opt('swatch none', cmd === 'color' ? 'Zadana boja' : 'Bez', !cur, () => applyStyle(attr, null));
+    opt('swatch none', cmd === 'color' ? 'Zadana boja' : 'Bez', !cur, () => applyStyle(attr, null)).innerHTML = icon('close');
     const colors = cmd === 'highlight' ? HL_COLORS : cmd === 'underline' ? UL_COLORS : TEXT_COLORS;
     for (const [v, label] of colors) {
       const b = opt('swatch', label, cur === v, () => applyStyle(attr, v));
