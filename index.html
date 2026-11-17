@@ -17,28 +17,34 @@
 <body>
 
 <!-- Home: list of notes -->
-<main id="home" class="view">
-  <header class="top">
-    <h1>Bilješke</h1>
+<main id="home">
+  <header class="appbar">
+    <div id="appbarMain" class="appbar-row">
+      <button id="foldersBtn" class="icon-btn" type="button" aria-label="Mape" data-icon="menu"></button>
+      <h1 id="homeTitle">Sve bilješke</h1>
+      <button id="searchBtn" class="icon-btn" type="button" aria-label="Pretraži" data-icon="search"></button>
+      <button id="viewBtn" class="icon-btn" type="button" aria-label="Promijeni prikaz"></button>
+    </div>
+    <div id="appbarSearch" class="appbar-row" hidden>
+      <button id="searchClose" class="icon-btn" type="button" aria-label="Zatvori pretragu" data-icon="back"></button>
+      <input id="search" type="search" placeholder="Pretraži bilješke…" aria-label="Pretraži bilješke" autocomplete="off">
+    </div>
   </header>
-  <div class="search">
-    <input id="search" type="search" placeholder="Pretraži bilješke…" aria-label="Pretraži bilješke" autocomplete="off">
-  </div>
-  <nav id="chips" aria-label="Mape"></nav>
-  <section id="list"></section>
-  <button id="newBtn" class="fab" type="button" aria-label="Nova bilješka">+</button>
+  <section id="list" class="list mode-list"></section>
+  <button id="newBtn" class="fab" type="button" aria-label="Nova bilješka" data-icon="plus"></button>
 </main>
 
 <!-- Note editor -->
 <section id="editor" class="view" hidden>
   <div class="bar">
     <button id="doneBtn" class="ghost" type="button">← Natrag</button>
-    <span id="saveState" class="muted" aria-live="polite"></span>
-    <button id="delBtn" class="danger" type="button">Obriši</button>
+    <span class="bar-right">
+      <span id="lockBadge" class="lock-badge" hidden><span data-icon="lock"></span>Zaključano</span>
+      <span id="saveState" class="muted" aria-live="polite"></span>
+    </span>
   </div>
   <input id="title" class="title-input" placeholder="Naslov" autocomplete="off" aria-label="Naslov">
-  <select id="folderSel" aria-label="Mapa"></select>
-  <div id="body" contenteditable="true" role="textbox" aria-multiline="true"
+  <div id="body" class="rich" contenteditable="true" role="textbox" aria-multiline="true"
        data-placeholder="Piši ovdje…"></div>
 
   <div id="toolbar" class="toolbar" role="toolbar" aria-label="Formatiranje">
@@ -64,6 +70,15 @@
   <div id="swatches"></div>
   <button id="fSave" class="primary" type="button">Spremi</button>
 </section>
+
+<!-- Overlays -->
+<div id="scrim" class="scrim"></div>
+<aside id="drawer" class="drawer" aria-label="Mape">
+  <h2>Mape</h2>
+  <nav id="folderList"></nav>
+</aside>
+<div id="sheet" class="sheet" role="dialog" aria-modal="true"></div>
+<div id="toast" class="toast" role="status"></div>
 
 <script src="app.js"></script>
 </body>

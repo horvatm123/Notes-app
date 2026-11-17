@@ -4,28 +4,70 @@ const $ = id => document.getElementById(id);
 const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
 const MAX_IMG = 1280;          // longest image side in px after resizing
 const SAVE_DELAY = 600;        // ms of inactivity before autosave
+const KDF_ITERATIONS = 250000; // PBKDF2 rounds: makes password guessing slow
+const LOCK_AFTER_MS = 60000;   // an open locked note closes if the app was hidden longer than this
+
+/* ---------------- Icons (inline SVG) ---------------- */
+
+const ICONS = {
+  menu: '<path d="M4 7h16M4 12h16M4 17h16"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.2-4.2"/>',
+  back: '<path d="M15 5l-7 7 7 7"/>',
+  grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+  list: '<rect x="4" y="4.5" width="16" height="6" rx="1.5"/><rect x="4" y="13.5" width="16" height="6" rx="1.5"/>',
+  dots: '<circle cx="12" cy="5.5" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="18.5" r="1.7" fill="currentColor" stroke="none"/>',
+  lock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',
+  unlock: '<rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 7.6-1.7"/>',
+  trash: '<path d="M5 7h14M10 7V5h4v2M7 7l1 13h8l1-13"/>',
+  share: '<path d="M12 4v11M8 8l4-4 4 4M5 14v5h14v-5"/>',
+  copy: '<rect x="8" y="8" width="11" height="12" rx="2"/><path d="M5 16V5a1 1 0 0 1 1-1h9"/>',
+  folder: '<path d="M3.5 7a2 2 0 0 1 2-2h4l2 2h7a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16z"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  notes: '<rect x="5" y="3.5" width="14" height="17" rx="2"/><path d="M9 8h6M9 12h6M9 16h4"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+};
+const icon = name =>
+  `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" ` +
+  `stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
+
+/* ---------------- State ---------------- */
 
 let db;
 let folders = [];
 let filter = 'all';            // 'all' or folder id
 let query = '';
+let searchOpen = false;
 let view = 'home';
-let current = null;            // note being edited
+let viewMode = loadPref('viewMode', 'list');   // 'list' or 'grid'
+let current = null;            // note being edited (plain text, memory only)
+let currentKey = null;         // key of the open locked note (memory only, never stored)
 let curFolder = null;          // folder being edited
 let dirty = false;
 let saveTimer = null;
 let lastRange = null;          // last caret position inside the editor
 let homeScroll = 0;
+let hiddenAt = 0;
+let sheetOpen = false;
+let sheetOnClose = null;
+let drawerOpen = false;
+
+function loadPref(key, def) {
+  try { return localStorage.getItem(key) || def; } catch { return def; }
+}
+function savePref(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* storage not available */ }
+}
 
 /* ---------------- Database (IndexedDB) ---------------- */
 
 function openDB() {
   return new Promise((res, rej) => {
-    const r = indexedDB.open('biljeske', 2);
+    const r = indexedDB.open('biljeske', 3);
     r.onupgradeneeded = () => {
       const d = r.result;
-      if (!d.objectStoreNames.contains('notes')) d.createObjectStore('notes', { keyPath: 'id' });
-      if (!d.objectStoreNames.contains('folders')) d.createObjectStore('folders', { keyPath: 'id' });
+      for (const s of ['notes', 'folders', 'meta'])
+        if (!d.objectStoreNames.contains(s)) d.createObjectStore(s, { keyPath: 'id' });
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -34,14 +76,31 @@ function openDB() {
 const req = r => new Promise((res, rej) => { r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
 const store = (s, mode) => db.transaction(s, mode).objectStore(s);
 const getAll = s => req(store(s, 'readonly').getAll());
+const getOne = (s, id) => req(store(s, 'readonly').get(id));
 const put = (s, o) => req(store(s, 'readwrite').put(o));
 const del = (s, id) => req(store(s, 'readwrite').delete(id));
+
+async function updateNote(id, patch) {
+  const n = await getOne('notes', id);
+  if (!n) return;
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === undefined) delete n[k]; else n[k] = v;
+  }
+  await put('notes', n);
+}
 
 /* ---------------- Helpers ---------------- */
 
 const folderById = id => folders.find(f => f.id === id);
 // lowercase + strip diacritics, so "sesir" finds "šešir"
 const norm = s => (s || '').toLowerCase().normalize('NFD').replace(/\p{M}/gu, '');
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
 
 function show(v) {
   view = v;
@@ -67,6 +126,8 @@ function textToHtml(text) {
     return '<div>' + (div.innerHTML || '<br>') + '</div>';
   }).join('');
 }
+const noteHtml = n => (n.html != null ? n.html : textToHtml(n.body));
+const countImages = html => (html.match(/<img\b/gi) || []).length;
 
 /* Only keep the tags/attributes the editor itself produces.
    Protects against broken or malicious HTML (paste, future sync). */
@@ -76,133 +137,510 @@ const DROP = new Set(['SCRIPT', 'STYLE', 'IFRAME', 'OBJECT', 'EMBED', 'LINK', 'M
 function sanitize(html) {
   const doc = new DOMParser().parseFromString('<body>' + html + '</body>', 'text/html');
   const walk = node => {
-    for (const el of [...node.childNodes]) {
-      if (el.nodeType === Node.TEXT_NODE) continue;
-      if (el.nodeType !== Node.ELEMENT_NODE) { el.remove(); continue; }
-      const tag = el.tagName.toUpperCase();
-      if (DROP.has(tag)) { el.remove(); continue; }
-      walk(el);
-      if (!ALLOWED.has(tag)) { el.replaceWith(...el.childNodes); continue; }
-      for (const a of [...el.attributes]) {
+    for (const e of [...node.childNodes]) {
+      if (e.nodeType === Node.TEXT_NODE) continue;
+      if (e.nodeType !== Node.ELEMENT_NODE) { e.remove(); continue; }
+      const tag = e.tagName.toUpperCase();
+      if (DROP.has(tag)) { e.remove(); continue; }
+      walk(e);
+      if (!ALLOWED.has(tag)) { e.replaceWith(...e.childNodes); continue; }
+      for (const a of [...e.attributes]) {
         const keep =
           (tag === 'IMG' && a.name === 'src' && /^data:image\/(png|jpeg|gif|webp);base64,/i.test(a.value)) ||
           (tag === 'IMG' && a.name === 'alt') ||
           (tag === 'UL' && a.name === 'class' && a.value === 'todo') ||
           (tag === 'LI' && a.name === 'data-checked' && a.value === 'true');
-        if (!keep) el.removeAttribute(a.name);
+        if (!keep) e.removeAttribute(a.name);
       }
-      if (tag === 'IMG' && !el.hasAttribute('src')) el.remove();
+      if (tag === 'IMG' && !e.hasAttribute('src')) e.remove();
     }
   };
   walk(doc.body);
   return doc.body.innerHTML;
 }
 
-/* ---------------- Home: list ---------------- */
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => t.classList.remove('show'), 2200);
+}
 
-function renderChips() {
-  const chips = $('chips');
-  chips.innerHTML = '';
-  const mk = (label, color, active, onclick, cls = '') => {
-    const c = document.createElement('button');
-    c.type = 'button';
-    c.className = 'chip ' + cls + (active ? ' active' : '');
-    if (color) {
-      const d = document.createElement('span');
-      d.className = 'dot';
-      d.style.background = color;
-      c.append(d);
-    }
-    c.append(label);
-    c.onclick = onclick;
-    chips.append(c);
-  };
-  mk('Sve', null, filter === 'all', () => { filter = 'all'; render(); });
-  for (const f of folders) {
-    const active = filter === f.id;
-    // tapping the active folder again opens its settings
-    mk(active ? f.name + ' ✎' : f.name, f.color, active, () => {
-      if (active) openFolderEd(f); else { filter = f.id; render(); }
+/* ---------------- Navigation ----------------
+   Every screen/overlay is a "layer" with its own browser-history entry,
+   so the phone's back gesture closes the top layer instead of the app. */
+
+const layers = [];
+let popWaiters = [];
+
+function pushLayer(close) {
+  layers.push(close);
+  history.pushState({ depth: layers.length }, '');
+}
+
+// close the top layer; resolves when it is closed
+function back() {
+  return new Promise(res => { popWaiters.push(res); history.back(); });
+}
+
+window.addEventListener('popstate', async () => {
+  const close = layers.pop();
+  if (close) await close();
+  const waiters = popWaiters;
+  popWaiters = [];
+  waiters.forEach(r => r());
+});
+
+function updateScrim() {
+  $('scrim').classList.toggle('open', sheetOpen || drawerOpen);
+}
+
+/* ---------------- Encryption ----------------
+   Password -> key with PBKDF2, note content encrypted with AES-GCM (256 bit).
+   One password for all locked notes. The key only lives in memory. */
+
+const te = new TextEncoder();
+const td = new TextDecoder();
+
+async function deriveKey(password, salt) {
+  const base = await crypto.subtle.importKey('raw', te.encode(password), 'PBKDF2', false, ['deriveKey']);
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: KDF_ITERATIONS, hash: 'SHA-256' },
+    base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+
+async function encryptJSON(key, obj) {
+  const iv = crypto.getRandomValues(new Uint8Array(12));   // new random IV for every save
+  const data = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, te.encode(JSON.stringify(obj)));
+  return { iv, data };
+}
+
+async function decryptJSON(key, enc) {
+  const buf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: enc.iv }, key, enc.data);
+  return JSON.parse(td.decode(buf));
+}
+
+// returns the key if the password is right, otherwise null
+async function tryPassword(password) {
+  const lock = await getOne('meta', 'lock');
+  if (!lock) return null;
+  const key = await deriveKey(password, lock.salt);
+  try {
+    await decryptJSON(key, lock.check);   // AES-GCM fails on a wrong key
+    return key;
+  } catch {
+    return null;
+  }
+}
+
+/* ---------------- Bottom sheet ---------------- */
+
+function showSheet(build, onClose = null) {
+  const sh = $('sheet');
+  sh.replaceChildren();
+  build(sh);
+  sheetOnClose = onClose;
+  if (!sheetOpen) {
+    sheetOpen = true;
+    sh.classList.add('open');
+    updateScrim();
+    pushLayer(() => {
+      sheetOpen = false;
+      sh.classList.remove('open');
+      updateScrim();
+      document.activeElement?.blur();
+      const cb = sheetOnClose;
+      sheetOnClose = null;
+      cb?.();
     });
   }
-  mk('+ Mapa', null, false, () => openFolderEd(), 'add');
+  sh.scrollTop = 0;
+}
+const closeSheet = () => (sheetOpen ? back() : Promise.resolve());
+
+function sheetTitle(text) { return el('h3', null, text); }
+
+// items: { icon | dot, label, onClick, danger, checked }
+function menuList(items) {
+  const box = el('div', 'menu');
+  for (const it of items) {
+    const b = el('button', 'menu-item' + (it.danger ? ' danger' : ''));
+    b.type = 'button';
+    if (it.dot) {
+      const d = el('span', 'dot');
+      d.style.background = it.dot;
+      b.append(d);
+    } else {
+      b.insertAdjacentHTML('beforeend', icon(it.icon));
+    }
+    b.append(el('span', null, it.label));
+    if (it.checked) b.insertAdjacentHTML('beforeend', icon('check').replace('<svg', '<svg class="check"'));
+    b.onclick = it.onClick;
+    box.append(b);
+  }
+  return box;
+}
+
+function passwordSheet({ title, text, fields, confirmLabel, isNew, onSubmit }) {
+  return new Promise(resolve => {
+    let result = null;
+    showSheet(sh => {
+      const form = el('form', 'pw-form');
+      form.append(el('h3', null, title));
+      if (text) form.append(el('p', null, text));
+      const inputs = fields.map(ph => {
+        const i = el('input');
+        i.type = 'password';
+        i.placeholder = ph;
+        i.autocomplete = isNew ? 'new-password' : 'current-password';
+        return i;
+      });
+      const err = el('p', 'error');
+      const cancel = el('button', 'secondary', 'Odustani');
+      cancel.type = 'button';
+      cancel.onclick = () => back();
+      const ok = el('button', null, confirmLabel);
+      ok.type = 'submit';
+      const actions = el('div', 'actions');
+      actions.append(cancel, ok);
+      form.append(...inputs, err, actions);
+      form.onsubmit = async e => {
+        e.preventDefault();
+        ok.disabled = true;
+        err.textContent = '';
+        try {
+          const r = await onSubmit(inputs.map(i => i.value));
+          if (typeof r === 'string') { err.textContent = r; inputs[0].select(); return; }
+          result = r;
+          await closeSheet();
+        } finally {
+          ok.disabled = false;
+        }
+      };
+      sh.append(form);
+      setTimeout(() => inputs[0].focus(), 60);
+    }, () => resolve(result));
+  });
+}
+
+function askPassword(title) {
+  return passwordSheet({
+    title,
+    text: 'Upiši lozinku za zaključane bilješke.',
+    fields: ['Lozinka'],
+    confirmLabel: 'Otključaj',
+    onSubmit: async ([pw]) => (await tryPassword(pw)) || 'Pogrešna lozinka.',
+  });
+}
+
+function setupPassword() {
+  return passwordSheet({
+    title: 'Postavi lozinku',
+    text: 'Ista lozinka vrijedi za sve zaključane bilješke. Ako je zaboraviš, zaključane bilješke se NE mogu vratiti.',
+    fields: ['Nova lozinka', 'Ponovi lozinku'],
+    confirmLabel: 'Postavi',
+    isNew: true,
+    onSubmit: async ([a, b]) => {
+      if (a.length < 4) return 'Lozinka mora imati barem 4 znaka.';
+      if (a !== b) return 'Lozinke se ne podudaraju.';
+      const salt = crypto.getRandomValues(new Uint8Array(16));
+      const key = await deriveKey(a, salt);
+      const check = await encryptJSON(key, { ok: true });
+      await put('meta', { id: 'lock', salt, check });
+      return key;
+    },
+  });
+}
+
+// key for locking a note: first time asks to create the password
+async function keyForLocking() {
+  return (await getOne('meta', 'lock')) ? askPassword('Zaključaj bilješku') : setupPassword();
+}
+
+/* ---------------- Home ---------------- */
+
+function renderHeader() {
+  const f = folderById(filter);
+  $('homeTitle').textContent = f ? f.name : 'Sve bilješke';
+  const next = viewMode === 'grid' ? 'list' : 'grid';
+  $('viewBtn').innerHTML = icon(next);
+  $('viewBtn').setAttribute('aria-label', next === 'grid' ? 'Prikaz mreže' : 'Prikaz popisa');
 }
 
 async function render() {
   folders = (await getAll('folders')).sort((a, b) => a.name.localeCompare(b.name, 'hr'));
   if (filter !== 'all' && !folderById(filter)) filter = 'all';
-  renderChips();
+  renderHeader();
 
   let notes = await getAll('notes');
-  const q = norm(query.trim());
-  if (q) notes = notes.filter(n => norm(n.title + ' ' + n.body).includes(q));   // search covers all folders
+  const q = searchOpen ? norm(query.trim()) : '';
+  if (q) notes = notes.filter(n => norm(n.title + ' ' + (n.locked ? '' : n.body)).includes(q));   // search covers all folders
   else if (filter !== 'all') notes = notes.filter(n => n.folderId === filter);
   notes.sort((a, b) => b.updated - a.updated);
 
   const list = $('list');
-  list.innerHTML = '';
+  list.className = 'list mode-' + viewMode;
+  list.replaceChildren();
   if (!notes.length) {
-    const p = document.createElement('p');
-    p.className = 'empty';
-    p.textContent = q ? 'Ništa nije pronađeno.' : 'Još nema bilješki. Dodaj prvu tipkom +';
-    list.append(p);
+    list.append(el('p', 'empty', q ? 'Ništa nije pronađeno.'
+      : searchOpen ? 'Upiši pojam za pretragu.' : 'Još nema bilješki. Dodaj prvu tipkom +'));
     return;
   }
-  for (const n of notes) {
-    const f = folderById(n.folderId);
-    const el = document.createElement('article');
-    el.className = 'note';
-    if (f) el.style.borderLeftColor = f.color;
+  const showFolder = filter === 'all' || !!q;
+  for (const n of notes) list.append(viewMode === 'grid' ? gridCard(n, showFolder) : listCard(n, showFolder));
+}
 
-    const t = document.createElement('b');
-    t.textContent = n.title || 'Bez naslova';
-    const p = document.createElement('div');
-    p.className = 'preview';
-    p.textContent = (n.body || '').replace(/\s+/g, ' ').slice(0, 140);
-    const m = document.createElement('div');
-    m.className = 'meta';
-    const parts = [formatDate(n.updated)];
-    if (f) parts.push(f.name);
-    if (n.images) parts.push(n.images === 1 ? '1 slika' : n.images + ' slike');
-    m.textContent = parts.join(' · ');
+function moreButton(n) {
+  const b = el('button', 'icon-btn more');
+  b.type = 'button';
+  b.innerHTML = icon('dots');
+  b.setAttribute('aria-label', 'Više opcija');
+  b.onclick = e => { e.stopPropagation(); openNoteMenu(n); };
+  return b;
+}
 
-    el.append(t);
-    if (p.textContent) el.append(p);
-    el.append(m);
-    el.onclick = () => openEditor(n);
-    list.append(el);
+function metaLine(n, f, showFolder, withDot) {
+  const m = el('div', 'meta');
+  if (f && withDot) {
+    const d = el('span', 'dot');
+    d.style.background = f.color;
+    m.append(d);
   }
+  const parts = [formatDate(n.updated)];
+  if (f && showFolder) parts.push(f.name);
+  if (n.images) parts.push(n.images === 1 ? '1 slika' : n.images + ' slike');
+  m.append(parts.join(' · '));
+  return m;
+}
+
+function listCard(n, showFolder) {
+  const f = folderById(n.folderId);
+  const card = el('article', 'note');
+  if (f) card.style.borderLeftColor = f.color;
+  card.append(el('b', null, n.title || 'Bez naslova'));
+  if (n.locked) {
+    const p = el('div', 'preview locked');
+    p.innerHTML = icon('lock');
+    p.append('Zaključano');
+    card.append(p);
+  } else {
+    const text = (n.body || '').replace(/\s+/g, ' ').slice(0, 140);
+    if (text) card.append(el('div', 'preview', text));
+  }
+  card.append(metaLine(n, f, showFolder, false), moreButton(n));
+  card.onclick = () => openNote(n);
+  return card;
+}
+
+function gridCard(n, showFolder) {
+  const f = folderById(n.folderId);
+  const card = el('article', 'note');
+  const th = el('div', 'thumb rich');
+  if (n.locked) {
+    th.classList.add('locked');
+    th.innerHTML = icon('lock');
+  } else {
+    th.innerHTML = sanitize(noteHtml(n));
+    if (!th.textContent.trim() && !th.querySelector('img')) th.classList.add('empty-thumb');
+  }
+  card.append(th, el('div', 'name', n.title || 'Bez naslova'), metaLine(n, f, showFolder, true), moreButton(n));
+  card.onclick = () => openNote(n);
+  return card;
+}
+
+/* ---------------- Folders drawer ---------------- */
+
+async function openDrawer() {
+  const notes = await getAll('notes');
+  const count = id => notes.filter(n => n.folderId === id).length;
+  const box = $('folderList');
+  box.replaceChildren();
+
+  const row = (active, extraCls) => el('div', 'folder-row' + (active ? ' active' : '') + (extraCls ? ' ' + extraCls : ''));
+  const pickBtn = (lead, label, cnt, onClick) => {
+    const b = el('button', 'pick');
+    b.type = 'button';
+    if (typeof lead === 'string') b.innerHTML = icon(lead); else b.append(lead);
+    b.append(el('span', 'label', label));
+    if (cnt != null) b.append(el('span', 'count', String(cnt)));
+    b.onclick = onClick;
+    return b;
+  };
+
+  const all = row(filter === 'all');
+  all.append(pickBtn('notes', 'Sve bilješke', notes.length, async () => { filter = 'all'; await back(); render(); }));
+  box.append(all);
+
+  for (const f of folders) {
+    const r = row(filter === f.id);
+    const d = el('span', 'dot');
+    d.style.background = f.color;
+    r.append(pickBtn(d, f.name, count(f.id), async () => { filter = f.id; await back(); render(); }));
+    const edit = el('button', 'icon-btn');
+    edit.type = 'button';
+    edit.innerHTML = icon('edit');
+    edit.setAttribute('aria-label', 'Uredi mapu ' + f.name);
+    edit.onclick = async () => { await back(); openFolderEd(f); };
+    r.append(edit);
+    box.append(r);
+  }
+
+  const add = row(false, 'add');
+  add.append(pickBtn('plus', 'Nova mapa', null, async () => { await back(); openFolderEd(); }));
+  box.append(add);
+
+  drawerOpen = true;
+  $('drawer').classList.add('open');
+  updateScrim();
+  pushLayer(() => {
+    drawerOpen = false;
+    $('drawer').classList.remove('open');
+    updateScrim();
+  });
+}
+
+/* ---------------- Note menu (⋮) ---------------- */
+
+function openNoteMenu(n) {
+  showSheet(sh => {
+    sh.append(sheetTitle(n.title || 'Bez naslova'));
+    const items = [
+      { icon: 'folder', label: 'Premjesti u mapu', onClick: () => openMoveSheet(n) },
+    ];
+    if (navigator.share) items.push({ icon: 'share', label: 'Podijeli', onClick: () => shareNote(n) });
+    items.push({ icon: 'copy', label: 'Kopiraj tekst', onClick: () => copyNote(n) });
+    items.push(n.locked
+      ? { icon: 'unlock', label: 'Otključaj', onClick: () => unlockNote(n) }
+      : { icon: 'lock', label: 'Zaključaj', onClick: () => lockNote(n) });
+    items.push({ icon: 'trash', label: 'Obriši', danger: true, onClick: () => deleteNote(n) });
+    sh.append(menuList(items));
+  });
+}
+
+function openMoveSheet(n) {
+  showSheet(sh => {
+    sh.append(sheetTitle('Premjesti u mapu'));
+    const move = async (id, name) => {
+      await updateNote(n.id, { folderId: id });
+      await closeSheet();
+      toast(id ? `Premješteno u „${name}”` : 'Uklonjeno iz mape');
+      render();
+    };
+    const items = [{ icon: 'notes', label: 'Bez mape', checked: !n.folderId, onClick: () => move(null) }];
+    for (const f of folders)
+      items.push({ dot: f.color, label: f.name, checked: n.folderId === f.id, onClick: () => move(f.id, f.name) });
+    sh.append(menuList(items));
+    if (!folders.length) sh.append(el('p', 'hint', 'Još nemaš mapa. Napravi ih u izborniku mapa (gore lijevo).'));
+  });
+}
+
+// plain text of a note, asks for the password if it is locked
+async function noteText(n, why) {
+  const fresh = await getOne('notes', n.id);
+  if (!fresh) return null;
+  let body = fresh.body || '';
+  if (fresh.locked) {
+    const key = await askPassword(why);
+    if (!key) return null;
+    body = (await decryptJSON(key, fresh.enc)).body;
+  }
+  return { title: fresh.title || '', text: (fresh.title ? fresh.title + '\n\n' : '') + body };
+}
+
+async function shareNote(n) {
+  const t = await noteText(n, 'Otključaj za dijeljenje');
+  if (!t) return;
+  try {
+    await navigator.share({ title: t.title || 'Bilješka', text: t.text });
+  } catch (e) {
+    if (e.name !== 'AbortError') toast('Dijeljenje nije uspjelo');
+  }
+  await closeSheet();
+}
+
+async function copyNote(n) {
+  const t = await noteText(n, 'Otključaj za kopiranje');
+  if (!t) return;
+  try {
+    await navigator.clipboard.writeText(t.text);
+    toast('Tekst je kopiran');
+  } catch {
+    toast('Kopiranje nije uspjelo');
+  }
+  await closeSheet();
+}
+
+async function lockNote(n) {
+  const key = await keyForLocking();
+  if (!key) return;
+  const fresh = await getOne('notes', n.id);
+  const enc = await encryptJSON(key, { html: noteHtml(fresh), body: fresh.body || '' });
+  // plain text is replaced, only the encrypted copy stays in the database
+  await put('notes', { ...fresh, html: '', body: '', images: 0, locked: true, enc });
+  toast('Bilješka je zaključana');
+  render();
+}
+
+async function unlockNote(n) {
+  const key = await askPassword('Otključaj bilješku');
+  if (!key) return;
+  const fresh = await getOne('notes', n.id);
+  const data = await decryptJSON(key, fresh.enc);
+  await updateNote(n.id, { html: data.html, body: data.body, images: countImages(data.html), locked: undefined, enc: undefined });
+  toast('Bilješka je otključana');
+  render();
+}
+
+async function deleteNote(n) {
+  await closeSheet();
+  if (!confirm(`Obrisati bilješku „${n.title || 'Bez naslova'}”?`)) return;
+  await del('notes', n.id);
+  toast('Bilješka je obrisana');
+  render();
 }
 
 /* ---------------- Editor ---------------- */
 
-function openEditor(n) {
+async function openNote(n) {
+  const fresh = await getOne('notes', n.id);
+  if (!fresh) return render();
+  if (!fresh.locked) return openEditor(fresh, null);
+  const key = await askPassword(fresh.title || 'Zaključana bilješka');
+  if (!key) return;
+  const data = await decryptJSON(key, fresh.enc);
+  openEditor({ ...fresh, html: data.html, body: data.body }, key);
+}
+
+function openEditor(n, key) {
   homeScroll = window.scrollY;
   current = n
     ? { ...n }
     : { id: crypto.randomUUID(), title: '', body: '', html: '', images: 0,
         folderId: filter === 'all' ? null : filter, updated: Date.now() };
+  currentKey = key || null;
   dirty = false;
   lastRange = null;
 
   $('title').value = current.title || '';
-  $('body').innerHTML = sanitize(current.html != null ? current.html : textToHtml(current.body));
+  $('body').innerHTML = sanitize(noteHtml(current));
   $('saveState').textContent = '';
+  $('lockBadge').hidden = !currentKey;
 
-  const sel = $('folderSel');
-  sel.innerHTML = '<option value="">Bez mape</option>';
-  for (const f of folders) {
-    const o = document.createElement('option');
-    o.value = f.id;
-    o.textContent = f.name;
-    sel.append(o);
-  }
-  sel.value = current.folderId || '';
-
-  history.pushState({ v: 'editor' }, '');
+  pushLayer(closeEditor);
   show('editor');
   window.scrollTo(0, 0);
   if (!n) $('title').focus();
+}
+
+async function closeEditor() {
+  await flushSave();
+  current = null;
+  currentKey = null;
+  $('body').innerHTML = '';            // do not keep decrypted text in the page
+  show('home');
+  await render();
+  window.scrollTo(0, homeScroll);
 }
 
 function markDirty() {
@@ -221,15 +659,19 @@ async function saveCurrent() {
   const text = bodyEl.innerText.trim();
   const images = bodyEl.querySelectorAll('img').length;
   const title = $('title').value.trim();
-  current = { ...current, title, html, body: text, images,
-              folderId: $('folderSel').value || null, updated: Date.now() };
+  current = { ...current, title, html, body: text, images, updated: Date.now() };
   dirty = false;
   if (!title && !text && !images) {        // empty note is not kept
     await del('notes', current.id);
     $('saveState').textContent = '';
     return;
   }
-  await put('notes', current);
+  let record = current;
+  if (currentKey) {
+    const enc = await encryptJSON(currentKey, { html, body: text });
+    record = { ...current, html: '', body: '', images: 0, locked: true, enc };
+  }
+  await put('notes', record);
   $('saveState').textContent = 'Spremljeno';
 }
 
@@ -242,8 +684,8 @@ function selectionElement() {
   const sel = getSelection();
   if (!sel.rangeCount) return null;
   const n = sel.anchorNode;
-  const el = n && (n.nodeType === Node.ELEMENT_NODE ? n : n.parentElement);
-  return el && $('body').contains(el) ? el : null;
+  const e = n && (n.nodeType === Node.ELEMENT_NODE ? n : n.parentElement);
+  return e && $('body').contains(e) ? e : null;
 }
 
 // Make sure the caret is inside the editor before running a command
@@ -295,14 +737,14 @@ function runCmd(cmd) {
 }
 
 function updateToolbar() {
-  const el = selectionElement();
-  const ul = el?.closest('ul');
+  const e = selectionElement();
+  const ul = e?.closest('ul');
   const state = {
-    bold: !!el && document.queryCommandState('bold'),
-    italic: !!el && document.queryCommandState('italic'),
-    heading: !!el?.closest('h1,h2,h3'),
+    bold: !!e && document.queryCommandState('bold'),
+    italic: !!e && document.queryCommandState('italic'),
+    heading: !!e?.closest('h1,h2,h3'),
     ul: !!ul && !ul.classList.contains('todo'),
-    ol: !!el?.closest('ol'),
+    ol: !!e?.closest('ol'),
     todo: !!ul && ul.classList.contains('todo'),
   };
   for (const b of $('toolbar').querySelectorAll('button[data-cmd]'))
@@ -347,7 +789,7 @@ function openFolderEd(f) {
   $('fName').value = curFolder.name;
   $('fDel').hidden = !f;
   drawSwatches();
-  history.pushState({ v: 'folderEd' }, '');
+  pushLayer(async () => { show('home'); await render(); });
   show('folderEd');
   if (!f) $('fName').focus();
 }
@@ -356,9 +798,8 @@ function drawSwatches() {
   const box = $('swatches');
   box.innerHTML = '';
   for (const c of COLORS) {
-    const b = document.createElement('button');
+    const b = el('button', 'sw' + (c === curFolder.color ? ' sel' : ''));
     b.type = 'button';
-    b.className = 'sw' + (c === curFolder.color ? ' sel' : '');
     b.style.background = c;
     b.setAttribute('aria-label', 'Boja ' + c);
     b.onclick = () => { curFolder.color = c; drawSwatches(); };
@@ -368,33 +809,42 @@ function drawSwatches() {
 
 /* ---------------- Events ---------------- */
 
-// Every screen change goes through browser history,
-// so the phone's back gesture returns to the list instead of closing the app.
-window.addEventListener('popstate', async () => {
-  if (view === 'editor') await flushSave();
-  current = null;
-  show('home');
-  await render();
-  window.scrollTo(0, homeScroll);
+// home
+$('newBtn').onclick = () => openEditor();
+$('foldersBtn').onclick = () => openDrawer();
+$('viewBtn').onclick = () => {
+  viewMode = viewMode === 'grid' ? 'list' : 'grid';
+  savePref('viewMode', viewMode);
+  render();
+};
+$('searchBtn').onclick = () => {
+  searchOpen = true;
+  $('appbarMain').hidden = true;
+  $('appbarSearch').hidden = false;
+  $('search').focus();
+  render();
+  pushLayer(() => {
+    searchOpen = false;
+    query = '';
+    $('search').value = '';
+    $('appbarSearch').hidden = true;
+    $('appbarMain').hidden = false;
+    render();
+  });
+};
+$('searchClose').onclick = () => back();
+$('search').addEventListener('input', e => { query = e.target.value; render(); });
+$('scrim').onclick = () => back();
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && (sheetOpen || drawerOpen)) { e.preventDefault(); back(); }
 });
 
-$('newBtn').onclick = () => openEditor();
-$('doneBtn').onclick = () => history.back();
-$('delBtn').onclick = async () => {
-  if (!confirm('Obrisati bilješku?')) return;
-  await del('notes', current.id);
-  current = null;
-  dirty = false;
-  history.back();
-};
-
-$('search').addEventListener('input', e => { query = e.target.value; render(); });
-
+// editor
+$('doneBtn').onclick = () => back();
 $('title').addEventListener('input', markDirty);
 $('title').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); $('body').focus(); }
 });
-$('folderSel').addEventListener('change', markDirty);
 
 const bodyEl = $('body');
 bodyEl.addEventListener('input', e => {
@@ -409,7 +859,8 @@ bodyEl.addEventListener('input', e => {
 bodyEl.addEventListener('click', e => {
   const li = e.target.closest?.('ul.todo > li');
   if (!li || e.target !== li) return;
-  if (e.clientX - li.getBoundingClientRect().left > 32) return;
+  const boxWidth = parseFloat(getComputedStyle(li).paddingLeft);
+  if (e.clientX - li.getBoundingClientRect().left > boxWidth) return;
   e.preventDefault();
   if (li.dataset.checked === 'true') li.removeAttribute('data-checked');
   else li.dataset.checked = 'true';
@@ -443,12 +894,17 @@ $('imgInput').addEventListener('change', async e => {
   if (file) await insertImage(file);
 });
 
-// save immediately when the app goes to the background
+// save when the app goes to the background; close a locked note after a longer pause
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'hidden') flushSave();
+  if (document.visibilityState === 'hidden') {
+    hiddenAt = Date.now();
+    flushSave();
+  } else if (view === 'editor' && currentKey && Date.now() - hiddenAt > LOCK_AFTER_MS) {
+    back();
+  }
 });
 
-// move the toolbar above the on-screen keyboard (iOS)
+// move the toolbar and sheets above the on-screen keyboard (iOS)
 if (window.visualViewport) {
   const vv = window.visualViewport;
   const updateKb = () => {
@@ -459,13 +915,14 @@ if (window.visualViewport) {
   vv.addEventListener('scroll', updateKb);
 }
 
-$('fCancel').onclick = () => history.back();
+// folder editor
+$('fCancel').onclick = () => back();
 $('fSave').onclick = async () => {
   curFolder.name = $('fName').value.trim();
   if (!curFolder.name) { alert('Upiši ime mape.'); return; }
   await put('folders', curFolder);
   filter = curFolder.id;
-  history.back();
+  await back();
 };
 $('fDel').onclick = async () => {
   if (!confirm('Obrisati mapu? Bilješke u njoj ostaju, bez mape.')) return;
@@ -473,15 +930,17 @@ $('fDel').onclick = async () => {
     if (n.folderId === curFolder.id) { n.folderId = null; await put('notes', n); }
   await del('folders', curFolder.id);
   filter = 'all';
-  history.back();
+  await back();
 };
 
 /* ---------------- Start ---------------- */
 
 (async () => {
+  for (const e of document.querySelectorAll('[data-icon]')) e.innerHTML = icon(e.dataset.icon);
   db = await openDB();
   // ask the browser not to auto-delete our data when storage is low
   navigator.storage?.persist?.().catch(() => {});
+  history.replaceState({ depth: 0 }, '');
   show('home');
   await render();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});

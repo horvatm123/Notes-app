@@ -1,7 +1,7 @@
 // Service worker: keeps the app files in a cache so the app works offline.
 // Strategy "stale-while-revalidate": answer from cache instantly,
 // then fetch a fresh copy in the background for the next start.
-const CACHE = 'biljeske-v1';
+const CACHE = 'biljeske-v2';
 const ASSETS = [
   './',
   './index.html',
@@ -13,7 +13,7 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS.map(u => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
