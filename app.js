@@ -4,28 +4,34 @@ const $ = id => document.getElementById(id);
 // folder colors (bright); OLD_COLORS are the softer ones from v1.0, converted on start
 // v1.4.0: brown and white added at the end (the order of the first 8 must stay, OLD_COLORS map to them by position)
 const WHITE = '#ffffff';
-const COLORS = ['#ff2d3d', '#ff7a00', '#ffc400', '#00c853', '#00b8d4', '#2f6bff', '#9b3dff', '#ff2d8a', '#a0622d', WHITE];
+// v1.4.2: ONE palette for everything (folders, text color, highlight, underline, accent), always in this order
+const PALETTE = [['red', 'Crvena', '#ff2d3d'], ['orange', 'Narančasta', '#ff7a00'], ['yellow', 'Žuta', '#ffc400'],
+  ['green', 'Zelena', '#00c853'], ['teal', 'Tirkizna', '#00b8d4'], ['blue', 'Plava', '#2f6bff'],
+  ['purple', 'Ljubičasta', '#9b3dff'], ['pink', 'Ružičasta', '#ff2d8a'], ['brown', 'Smeđa', '#a0622d'],
+  ['white', 'Bijela', WHITE]];
+const COLORS = PALETTE.map(c => c[2]);
 // color for drawing a folder: white is shown light grey in the light theme, otherwise it would not be visible
 const fcol = c => c === WHITE ? 'var(--folder-white)' : c;
 const OLD_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
-const ACCENTS = [['blue', '#2f6bff', 'Plava'], ['purple', '#8a3dff', 'Ljubičasta'], ['pink', '#f0287a', 'Ružičasta'],
-  ['red', '#ee2b3b', 'Crvena'], ['orange', '#ff6a00', 'Narančasta'], ['green', '#00a651', 'Zelena'], ['teal', '#009d9a', 'Tirkizna'],
-  ['brown', '#a0622d', 'Smeđa']];
+// accent: same palette without white (buttons, links and checkboxes need a color that shows on a white card);
+// the shades are a bit deeper than the folder ones, so white text on a button stays readable
+const ACCENT_SHADES = { red: '#ee2b3b', orange: '#ff6a00', yellow: '#f2b000', green: '#00a651', teal: '#009d9a',
+  blue: '#2f6bff', purple: '#8a3dff', pink: '#f0287a', brown: '#a0622d' };
+const ACCENTS = PALETTE.filter(c => ACCENT_SHADES[c[0]]).map(([v, name]) => [v, ACCENT_SHADES[v], name]);
 const DEFAULT_SETTINGS = { theme: 'system', accent: 'blue', font: 'dm', size: 'l' };
 // formatting options; names map to CSS variables (--t-*, --h-*) so dark mode can adjust them
-const TEXT_COLORS = [['red', 'Crvena'], ['blue', 'Plava'], ['green', 'Zelena'], ['yellow', 'Žuta'], ['orange', 'Narančasta'], ['purple', 'Ljubičasta'], ['brown', 'Smeđa'], ['white', 'Bijela']];
+const TEXT_COLORS = PALETTE.map(([v, name]) => [v, name]);
 const HL_COLORS = TEXT_COLORS;
 const UL_COLORS = [['fg', 'Obična'], ...TEXT_COLORS];
 const SIZES = [['s', 'Mala', '.85em'], ['', 'Normalna', '1em'], ['l', 'Velika', '1.25em'], ['xl', 'Najveća', '1.55em']];
 const LISTS = [['bullet', '•', 'Točke'], ['number', '1.', 'Brojevi'], ['dash', '–', 'Crtice'], ['arrow', '→', 'Strelice']];
 const STYLE_VALUES = {
-  // 'pink' was in the first build of 1.4.0; kept so text colored with it is not lost
-  'data-c': new Set([...TEXT_COLORS.map(c => c[0]), 'pink']),
-  'data-h': new Set([...HL_COLORS.map(c => c[0]), 'pink']),
-  'data-u': new Set([...UL_COLORS.map(c => c[0]), 'pink']),
+  'data-c': new Set(TEXT_COLORS.map(c => c[0])),
+  'data-h': new Set(HL_COLORS.map(c => c[0])),
+  'data-u': new Set(UL_COLORS.map(c => c[0])),
   'data-fs': new Set(['s', 'l', 'xl']),
 };
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.4.2';
 const MAX_IMG = 1280;          // longest image side in px after resizing
 const SAVE_DELAY = 500;        // ms of inactivity before autosave
 const KDF_ITERATIONS = 600000; // PBKDF2 rounds: makes PIN guessing slow
@@ -1187,7 +1193,7 @@ function folderSheet(f) {
           b.type = 'button';
           b.style.background = c;
           if (c === WHITE) b.classList.add('white');
-          b.setAttribute('aria-label', 'Boja ' + c);
+          b.setAttribute('aria-label', PALETTE.find(p => p[2] === c)?.[1] || 'Boja');
           b.onclick = () => { cur.color = c; draw(); };
           sw.append(b);
         }
@@ -2273,6 +2279,7 @@ function openPanel(cmd) {
       b.textContent = glyph;
     }
   } else {
+    row.classList.add('colors');
     opt('swatch none', cmd === 'color' ? 'Zadana boja' : 'Bez', !cur, () => applyStyle(attr, null)).innerHTML = icon('close');
     const colors = cmd === 'highlight' ? HL_COLORS : cmd === 'underline' ? UL_COLORS : TEXT_COLORS;
     for (const [v, label] of colors) {
