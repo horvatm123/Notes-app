@@ -31,7 +31,7 @@ const STYLE_VALUES = {
   'data-u': new Set(UL_COLORS.map(c => c[0])),
   'data-fs': new Set(['s', 'l', 'xl']),
 };
-const APP_VERSION = '1.4.2';
+const APP_VERSION = '1.4.3';
 const MAX_IMG = 1280;          // longest image side in px after resizing
 const SAVE_DELAY = 500;        // ms of inactivity before autosave
 const KDF_ITERATIONS = 600000; // PBKDF2 rounds: makes PIN guessing slow
@@ -194,14 +194,12 @@ function show(v) {
   }
 }
 
-// "19. 11.", with the year when it is not the current one
+// "19. 11. 2026." (v1.4.3: the year is always shown)
 function formatDay(ts) {
   const d = new Date(ts);
-  let date = `${d.getDate()}. ${d.getMonth() + 1}.`;
-  if (d.getFullYear() !== new Date().getFullYear()) date += ` ${d.getFullYear()}.`;
-  return date;
+  return `${d.getDate()}. ${d.getMonth() + 1}. ${d.getFullYear()}.`;
 }
-// "19. 11. u 14:35"
+// "19. 11. 2026. u 14:35"
 function formatDate(ts) {
   const d = new Date(ts);
   const pad = n => String(n).padStart(2, '0');
