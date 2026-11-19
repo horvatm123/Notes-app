@@ -31,7 +31,7 @@ const STYLE_VALUES = {
   'data-u': new Set(UL_COLORS.map(c => c[0])),
   'data-fs': new Set(['s', 'l', 'xl']),
 };
-const APP_VERSION = '1.4.3';
+const APP_VERSION = '1.5.0';
 const MAX_IMG = 1280;          // longest image side in px after resizing
 const SAVE_DELAY = 500;        // ms of inactivity before autosave
 const KDF_ITERATIONS = 600000; // PBKDF2 rounds: makes PIN guessing slow
@@ -738,8 +738,11 @@ function renderTabs() {
   }
 }
 
+let renderSeq = 0;
 async function render() {
+  const seq = ++renderSeq;
   const all = await loadFolders();
+  if (seq !== renderSeq) return;       // a newer render started meanwhile
   if (filter !== 'all' && filter !== 'home' && (!folderById(filter) || folderHidden(filter))) setFilter('home');
   renderHeader();
 
@@ -831,12 +834,46 @@ function listCard(n, showFolder) {
     p.append('Zaključano');
     card.append(p);
   } else {
-    const text = (n.body || '').replace(/\s+/g, ' ').slice(0, 160);
+    const text = (n.body || '').slice(0, 400).replace(/\s+/g, ' ').trim().slice(0, 160);
     if (text) card.append(el('div', 'preview', text));
   }
   card.append(metaLine(n, f, showFolder, false), moreButton(n));
   return card;
 }
+
+// A thumbnail only shows the start of a note: keep just that part, cleaned once and
+// remembered until the note changes (cleaning a whole note with photos on every render is slow)
+const thumbCache = new Map();
+function thumbHtml(n) {
+  const c = thumbCache.get(n.id);
+  if (c && c.u === n.updated) return c;
+  const box = document.createElement('div');
+  box.innerHTML = sanitize(noteHtml(n));
+  let chars = 0, blocks = 0, imgs = 0;
+  for (const node of [...box.childNodes]) {
+    if (chars > 600 || blocks >= 14 || imgs >= 1) { node.remove(); continue; }
+    chars += node.textContent.length;
+    blocks++;
+    if (node.nodeType === Node.ELEMENT_NODE) imgs += node.matches('img') ? 1 : node.querySelectorAll('img').length;
+  }
+  for (const img of box.querySelectorAll('img')) { img.loading = 'lazy'; img.decoding = 'async'; }
+  const v = { u: n.updated, html: box.innerHTML, empty: !box.textContent.trim() && !box.querySelector('img') };
+  thumbCache.set(n.id, v);
+  return v;
+}
+
+const fillThumb = th => {
+  const n = th._note;
+  if (!n) return;
+  th._note = null;
+  thumbObserver.unobserve(th);
+  const t = thumbHtml(n);
+  th.innerHTML = t.html;
+  if (t.empty) th.classList.add('empty-thumb');
+};
+const thumbObserver = new IntersectionObserver(entries => {
+  for (const e of entries) if (e.isIntersecting) fillThumb(e.target);
+}, { rootMargin: '800px 0px' });
 
 function gridCard(n, showFolder) {
   const [card, f] = noteCard(n);
@@ -845,8 +882,9 @@ function gridCard(n, showFolder) {
     th.classList.add('locked');
     th.innerHTML = icon('lock');
   } else {
-    th.innerHTML = sanitize(noteHtml(n));
-    if (!th.textContent.trim() && !th.querySelector('img')) th.classList.add('empty-thumb');
+    // the size of a thumbnail is fixed, so its content can be filled in only when it comes near the screen
+    th._note = n;
+    thumbObserver.observe(th);
   }
   card.append(th, el('div', 'name', n.title || 'Bez naslova'), metaLine(n, f, showFolder, true), moreButton(n));
   return card;
@@ -1030,24 +1068,43 @@ function wordScore(q, w) {
 }
 
 // returns Map id -> score for notes that match
+// words of each note, split once and kept until the note changes (search runs on every key press)
+const wordCache = new Map();
+function noteWords(n) {
+  const c = wordCache.get(n.id);
+  if (c && c.u === n.updated && c.l === !!n.locked) return c;
+  const v = { u: n.updated, l: !!n.locked, title: [...new Set(words(n.title))],
+    body: n.locked ? [] : [...new Set(words(n.body))], ntitle: norm(n.title) };
+  wordCache.set(n.id, v);
+  return v;
+}
+
 function searchNotes(notes, query) {
   const qWords = words(query);
   const phrase = norm(query);
   const res = new Map();
   if (!qWords.length) return res;
+  // the same word appears in many notes: score each (query word, note word) pair only once
+  const memo = qWords.map(() => new Map());
+  const score = (qi, w) => {
+    const m = memo[qi];
+    let v = m.get(w);
+    if (v === undefined) { v = wordScore(qWords[qi], w); m.set(w, v); }
+    return v;
+  };
   for (const n of notes) {
-    const titleW = words(n.title);
-    const bodyW = n.locked ? [] : words(n.body);
+    const nw = noteWords(n);
+    const titleW = nw.title, bodyW = nw.body;
     let total = 0;
-    for (const q of qWords) {
+    for (let qi = 0; qi < qWords.length; qi++) {
       let best = 0;
-      for (const w of titleW) best = Math.max(best, wordScore(q, w) * 2);   // title counts double
-      if (best < 8) for (const w of bodyW) { best = Math.max(best, wordScore(q, w)); if (best >= 4) break; }
+      for (const w of titleW) best = Math.max(best, score(qi, w) * 2);   // title counts double
+      if (best < 8) for (const w of bodyW) { best = Math.max(best, score(qi, w)); if (best >= 4) break; }
       if (!best) { total = 0; break; }
       total += best;
     }
     if (!total) continue;
-    if (norm(n.title).includes(phrase)) total += 6;
+    if (nw.ntitle.includes(phrase)) total += 6;
     res.set(n.id, total);
   }
   return res;
@@ -1982,8 +2039,15 @@ async function openNote(n) {
   openEditor({ ...latest, html: data.html, body: data.body }, key);
 }
 
+// remember which card was at the top of the screen, to come back to the same place
+// (cards far off the screen have estimated heights, so a plain scroll position is not exact)
+let homeAnchor = null;
 function openEditor(n, key) {
   homeScroll = window.scrollY;
+  const top = $('appbarMain').closest('.appbar').getBoundingClientRect().bottom;
+  // not the opened note itself: if it is edited, it moves to the top of the list
+  const card = [...$('list').querySelectorAll('.note')].find(c => c.getBoundingClientRect().bottom > top && c.dataset.id !== n?.id);
+  homeAnchor = card ? { id: card.dataset.id, y: card.getBoundingClientRect().top } : null;
   const now = Date.now();
   current = n
     ? { ...n }
@@ -2015,9 +2079,11 @@ async function closeEditor() {
   current = null;
   currentKey = null;
   $('body').innerHTML = '';            // do not keep decrypted text in the page
+  await render();                      // build the list while it is still hidden, then slide it in
   show('home');
-  await render();
-  window.scrollTo(0, homeScroll);
+  const card = homeAnchor && $('list').querySelector(`.note[data-id="${CSS.escape(homeAnchor.id)}"]`);
+  if (card) window.scrollTo(0, window.scrollY + card.getBoundingClientRect().top - homeAnchor.y);
+  else window.scrollTo(0, homeScroll);
 }
 
 function markDirty() {
@@ -2401,7 +2467,13 @@ $('searchBtn').onclick = () => {
   });
 };
 $('searchClose').onclick = () => back();
-$('search').addEventListener('input', e => { query = e.target.value; render(); });
+// wait for a short pause in typing, so the list is not rebuilt on every letter
+let searchTimer = null;
+$('search').addEventListener('input', e => {
+  query = e.target.value;
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(render, 120);
+});
 $('scrim').onclick = () => back();
 document.addEventListener('keydown', e => {
   if (pinOpen) {             // laptop: type the PIN with the keyboard
@@ -2495,9 +2567,18 @@ window.addEventListener('pagehide', () => flushSave());
 // move the toolbar and sheets above the on-screen keyboard (iOS)
 if (window.visualViewport) {
   const vv = window.visualViewport;
+  let lastKb = -1, kbFrame = 0;
+  // runs at most once per frame and only writes when the value changes
+  // (writing a CSS variable on <html> restyles the whole page)
   const updateKb = () => {
-    const kb = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
-    document.documentElement.style.setProperty('--kb', kb + 'px');
+    if (kbFrame) return;
+    kbFrame = requestAnimationFrame(() => {
+      kbFrame = 0;
+      const kb = Math.max(0, Math.round(window.innerHeight - vv.height - vv.offsetTop));
+      if (kb === lastKb) return;
+      lastKb = kb;
+      document.documentElement.style.setProperty('--kb', kb + 'px');
+    });
   };
   vv.addEventListener('resize', updateKb);
   vv.addEventListener('scroll', updateKb);

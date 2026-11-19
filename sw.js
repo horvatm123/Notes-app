@@ -1,7 +1,7 @@
 // Service worker: keeps the app files in a cache so the app works offline.
 // Strategy "stale-while-revalidate": answer from cache instantly,
 // then fetch a fresh copy in the background for the next start.
-const CACHE = 'biljeske-v15';
+const CACHE = 'biljeske-v16';
 const ASSETS = [
   './',
   './index.html',

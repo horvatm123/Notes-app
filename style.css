@@ -246,6 +246,10 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 #selCount { font-family: var(--font-ui); font-size: 1.25rem; font-weight: 600; }
 .sel-all { flex: none; background: transparent; color: var(--accent); font-weight: 600; padding: 8px 10px; }
 .note:active { transform: scale(.98); }
+/* cards far off the screen are not laid out or painted until scrolled near (big lists stay smooth);
+   "auto" remembers a card's real size once it has been shown */
+.mode-list .note:not(.anim) { content-visibility: auto; contain-intrinsic-size: auto 118px; }
+.mode-grid .note:not(.anim) { content-visibility: auto; contain-intrinsic-size: auto 290px; }
 .note.anim { animation: rise-in .32s var(--ease) both; animation-delay: calc(var(--i, 0) * 24ms); }
 .note.leaving { opacity: 0; transform: scale(.94); transition: opacity .2s, transform .2s var(--ease); }
 .note .meta { color: var(--muted); font-size: .8rem; display: flex; flex-wrap: wrap; align-items: center; gap: 2px 12px; }
@@ -602,6 +606,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   border-radius: 0 24px 24px 0;
   transform: translateX(-100%);
   visibility: hidden;
+  will-change: transform;   /* own layer: slides without repainting the page */
   transition: transform .38s var(--ease-sheet), visibility .38s;
 }
 .drawer.open { transform: none; visibility: visible; box-shadow: 4px 0 24px rgba(0, 0, 0, .2); }
@@ -633,6 +638,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   padding: 8px 12px calc(14px + env(safe-area-inset-bottom));
   transform: translateY(100%);
   visibility: hidden;
+  will-change: transform;
   transition: transform .4s var(--ease-sheet), visibility .4s, bottom .2s;
 }
 .sheet.open { transform: none; visibility: visible; box-shadow: 0 -6px 30px rgba(0, 0, 0, .18); }
