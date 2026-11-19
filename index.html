@@ -3,8 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<meta name="theme-color" content="#f6f6f8" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0f0f10" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f4f5f9">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Bilješke">
@@ -12,24 +11,42 @@
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <title>Bilješke</title>
+<script>
+  // apply saved settings before the first paint, so the page does not flash in the wrong theme
+  (function () {
+    var s = {};
+    try { s = JSON.parse(localStorage.getItem('settings') || '{}') || {}; } catch (e) { /* ignore */ }
+    var dark = s.theme === 'dark' || (s.theme !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+    var r = document.documentElement;
+    r.dataset.theme = dark ? 'dark' : 'light';
+    r.dataset.font = s.font || 'serif';
+    r.dataset.size = s.size || 'l';
+    r.dataset.accent = s.accent || 'blue';
+  })();
+</script>
+<link rel="preload" href="fonts/source-serif-4-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
 <!-- Home: list of notes -->
-<main id="home">
+<main id="home" class="view-home">
   <header class="appbar">
     <div id="appbarMain" class="appbar-row">
-      <button id="foldersBtn" class="icon-btn" type="button" aria-label="Mape" data-icon="menu"></button>
-      <h1 id="homeTitle">Sve bilješke</h1>
+      <button id="menuBtn" class="icon-btn" type="button" aria-label="Izbornik" data-icon="menu"></button>
+      <h1 id="homeTitle">Bilješke</h1>
       <button id="searchBtn" class="icon-btn" type="button" aria-label="Pretraži" data-icon="search"></button>
       <button id="viewBtn" class="icon-btn" type="button" aria-label="Promijeni prikaz"></button>
+      <button id="folderMenuBtn" class="icon-btn" type="button" aria-label="Opcije mape" data-icon="dots" hidden></button>
     </div>
     <div id="appbarSearch" class="appbar-row" hidden>
       <button id="searchClose" class="icon-btn" type="button" aria-label="Zatvori pretragu" data-icon="back"></button>
       <input id="search" type="search" placeholder="Pretraži bilješke…" aria-label="Pretraži bilješke" autocomplete="off">
     </div>
-    <nav id="tabs" class="tabs" aria-label="Mape"></nav>
+    <div id="tabsRow" class="tabs-row">
+      <nav id="tabs" class="tabs" aria-label="Mape"></nav>
+      <button id="allFoldersBtn" class="icon-btn folders-btn" type="button" aria-label="Sve mape" data-icon="folders"></button>
+    </div>
   </header>
   <section id="list" class="list mode-list"></section>
   <button id="newBtn" class="fab" type="button" aria-label="Nova bilješka" data-icon="plus"></button>
@@ -42,9 +59,11 @@
     <span class="bar-right">
       <span id="lockBadge" class="lock-badge" hidden><span data-icon="lock"></span>Zaključano</span>
       <span id="saveState" class="muted" aria-live="polite"></span>
+      <button id="saveBtn" class="save-btn" type="button"><span data-icon="check"></span>Spremi</button>
     </span>
   </div>
   <input id="title" class="title-input" placeholder="Naslov" autocomplete="off" aria-label="Naslov">
+  <p id="noteDates" class="note-dates"></p>
   <div id="body" class="rich" contenteditable="true" role="textbox" aria-multiline="true"
        data-placeholder="Piši ovdje…"></div>
 
@@ -67,23 +86,11 @@
   <input id="imgInput" type="file" accept="image/*" hidden>
 </section>
 
-<!-- Folder editor -->
-<section id="folderEd" class="view" hidden>
-  <div class="bar">
-    <button id="fCancel" class="ghost" type="button">← Natrag</button>
-    <button id="fDel" class="danger" type="button">Obriši mapu</button>
-  </div>
-  <h2 id="fTitle">Mapa</h2>
-  <input id="fName" placeholder="Ime mape" autocomplete="off" maxlength="40">
-  <div id="swatches"></div>
-  <button id="fSave" class="primary" type="button">Spremi</button>
-</section>
-
 <!-- Overlays -->
 <div id="scrim" class="scrim"></div>
-<aside id="drawer" class="drawer" aria-label="Mape">
-  <h2>Mape</h2>
-  <nav id="folderList"></nav>
+<aside id="drawer" class="drawer" aria-label="Izbornik">
+  <h2>Bilješke</h2>
+  <nav id="drawerList"></nav>
 </aside>
 <div id="sheet" class="sheet" role="dialog" aria-modal="true"></div>
 <div id="pin" class="pin" role="dialog" aria-modal="true" aria-labelledby="pinTitle">
@@ -96,7 +103,8 @@
   </div>
 </div>
 <div id="toast" class="toast" role="status"></div>
-<input id="importInput" type="file" accept=".json,application/json" hidden>
+<input id="importInput" type="file" multiple
+       accept=".json,.zip,.txt,.md,application/json,application/zip,application/x-zip-compressed,text/plain,text/markdown" hidden>
 
 <script src="app.js"></script>
 </body>

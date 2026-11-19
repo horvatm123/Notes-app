@@ -1,6 +1,6 @@
 # Bilješke (Notes-app)
 
-Private notes app for personal, day-to-day use. Version **1.0.0**.
+Private notes app for personal, day-to-day use. Version **1.1.0**.
 
 Live: https://horvatm123.github.io/Notes-app/
 
@@ -11,22 +11,26 @@ It is an installable web app (PWA). All notes are stored only on the device, in 
 - **iPhone (Safari):** open the link → Share → *Add to Home Screen*
 
 ## Features
-- **Home screen:** tabs for notes without a folder (home), each folder, and all notes; list or grid view (Samsung Notes style); search that ignores diacritics (`sesir` finds `šešir`)
-- **Folders** with colors, managed from the ☰ menu
-- **Editor:** formatting tools behind the pencil button: bold, italic, colored underline, text color, highlight, font size, lists (bullets, numbers, dashes, arrows), checklists, images (resized to max 1280 px); autosave
-- **Note menu (⋮):** move to folder, share, copy text, lock / unlock, delete
-- **Locked notes:** 6-digit PIN; content encrypted with AES-256-GCM, key derived from the PIN with PBKDF2 (600 000 rounds). Titles stay visible. A forgotten PIN cannot be recovered.
-- **Backup:** ☰ → *Izvezi kopiju* saves one JSON file; *Uvezi kopiju* merges it back (newer version of a note wins). Locked notes stay encrypted in the file, other notes are readable.
-- Works offline, dark mode, updates itself when a new version is published
+- **Home screen:** always opens on home; tabs for notes without a folder, each folder and all notes; the folder you wrote in last moves to the front; a button shows all folders as tiles; list or grid view
+- **Search** ignores diacritics and forgives typos (`promijena` finds `promjena`)
+- **Folders** with bright colors; ⋮ inside a folder: edit name/color, lock with the PIN, delete. A locked folder needs the PIN to open, its notes are encrypted and hidden from *Sve* and search
+- **Editor:** serif font (Source Serif 4) or system font, formatting tools behind the pencil button, autosave plus a *Spremi* button (save and close), created/edited date
+- **Note menu (⋮):** move to a folder or a new folder, share, copy text, lock / unlock, delete
+- **Settings (☰ → Postavke):** theme (system/light/dark), accent color, font, text size, date and order by last edit or creation
+- **Locked notes:** 6-digit PIN; AES-256-GCM, key from the PIN with PBKDF2 (600 000 rounds). Titles stay visible. A forgotten PIN cannot be recovered.
+- **Backup:** ☰ → *Izvezi kopiju*: to Google Drive (share sheet) or to the device, optionally encrypted with the PIN. *Uvezi* merges it back (newer version of a note wins)
+- **Import from other apps:** Google Keep (Takeout `.zip` or `.json`), `.txt`/`.md` files, and *Share → Bilješke* from any app (share target)
+- Works offline, animations respect the system "reduce motion" setting, updates itself when a new version is published
 
 ## Files
 | File | Purpose |
 |---|---|
 | `index.html` | markup |
-| `style.css` | look |
-| `app.js` | logic: database, list, editor, locking, backup |
+| `style.css` | look, themes, animations |
+| `app.js` | logic: database, list, search, editor, locking, settings, backup, import |
 | `sw.js` | service worker (offline cache, updates) |
-| `manifest.webmanifest`, `icons/` | install info |
+| `manifest.webmanifest`, `icons/` | install info, share target |
+| `fonts/` | Source Serif 4 (SIL Open Font License, see `fonts/OFL.txt`) |
 
 ## Releasing a new version
 Change `APP_VERSION` in `app.js` and the `CACHE` name in `sw.js`; installed apps pick up the update automatically.

@@ -1,7 +1,12 @@
 'use strict';
 
 const $ = id => document.getElementById(id);
-const COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
+// folder colors (bright); OLD_COLORS are the softer ones from v1.0, converted on start
+const COLORS = ['#ff2d3d', '#ff7a00', '#ffc400', '#00c853', '#00b8d4', '#2f6bff', '#9b3dff', '#ff2d8a'];
+const OLD_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
+const ACCENTS = [['blue', '#2f6bff', 'Plava'], ['purple', '#8a3dff', 'Ljubičasta'], ['pink', '#f0287a', 'Ružičasta'],
+  ['red', '#ee2b3b', 'Crvena'], ['orange', '#ff6a00', 'Narančasta'], ['green', '#00a651', 'Zelena'], ['teal', '#009d9a', 'Tirkizna']];
+const DEFAULT_SETTINGS = { theme: 'system', accent: 'blue', font: 'serif', size: 'l', dateMode: 'updated' };
 // formatting options; names map to CSS variables (--t-*, --h-*) so dark mode can adjust them
 const TEXT_COLORS = [['red', 'Crvena'], ['blue', 'Plava'], ['green', 'Zelena'], ['yellow', 'Žuta'], ['orange', 'Narančasta'], ['purple', 'Ljubičasta']];
 const HL_COLORS = TEXT_COLORS;
@@ -14,9 +19,9 @@ const STYLE_VALUES = {
   'data-u': new Set(UL_COLORS.map(c => c[0])),
   'data-fs': new Set(['s', 'l', 'xl']),
 };
-const APP_VERSION = '1.0.1';
+const APP_VERSION = '1.1.0';
 const MAX_IMG = 1280;          // longest image side in px after resizing
-const SAVE_DELAY = 600;        // ms of inactivity before autosave
+const SAVE_DELAY = 500;        // ms of inactivity before autosave
 const KDF_ITERATIONS = 600000; // PBKDF2 rounds: makes PIN guessing slow
 const LEGACY_ITERATIONS = 250000; // rounds used by the old text password (v2)
 const PIN_LENGTH = 6;
@@ -50,6 +55,12 @@ const ICONS = {
   checklist: '<rect x="3.5" y="4" width="6.5" height="6.5" rx="1.6"/><path d="M5.2 7.3l1.3 1.3 2-2.3"/><rect x="3.5" y="13.5" width="6.5" height="6.5" rx="1.6"/><path d="M13.5 7.3H20.5M13.5 16.8H20.5"/>',
   highlight: '<path d="M14.5 4.5l5 5-8 8H7v-4.5z"/><path d="M12 7l5 5"/>',
   home: '<path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h11V9.5"/><path d="M10 20v-5h4v5"/>',
+  folders: '<path d="M3 8.5a2 2 0 0 1 2-2h3.5l1.8 1.8H16a2 2 0 0 1 2 2V16a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M6.5 4.5h3l1.5 1.5h7a2.5 2.5 0 0 1 2.5 2.5v6"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/>',
+  cloud: '<path d="M7 18.5h10.5a4 4 0 0 0 .4-8 6 6 0 0 0-11.5 1.6A3.3 3.3 0 0 0 7 18.5z"/>',
+  apps: '<rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><path d="M16.5 13.5v6M13.5 16.5h6"/>',
+  phone: '<rect x="6.5" y="3" width="11" height="18" rx="2.5"/><path d="M10.5 18h3"/>',
+  palette: '<path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.2 0 1.8-.8 1.8-1.7 0-1.3-1.2-1.5-1.2-2.6 0-.9.7-1.4 1.6-1.4h2.1a4.2 4.2 0 0 0 4.2-4.2C20.5 6.5 16.7 3.5 12 3.5z"/><circle cx="7.8" cy="11" r="1.1" fill="currentColor" stroke="none"/><circle cx="10.5" cy="7.5" r="1.1" fill="currentColor" stroke="none"/><circle cx="15" cy="7.8" r="1.1" fill="currentColor" stroke="none"/>',
 };
 const icon = name =>
   `<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" ` +
@@ -59,14 +70,17 @@ const icon = name =>
 
 let db;
 let folders = [];
-let filter = loadPref('filter', 'home');   // 'home' (no folder), 'all' or folder id
+let filter = 'home';           // 'home' (no folder), 'all' or folder id; the app always starts at home
 let query = '';
 let searchOpen = false;
 let view = 'home';
 let viewMode = loadPref('viewMode', 'list');   // 'list' or 'grid'
+let settings = loadSettings();
 let current = null;            // note being edited (plain text, memory only)
 let currentKey = null;         // key of the open locked note (memory only, never stored)
-let curFolder = null;          // folder being edited
+let openFolderId = null;       // locked folder that is currently unlocked
+let folderKey = null;          // its key (memory only); forgotten when leaving the folder
+let animateList = true;        // next render animates the cards in
 let dirty = false;
 let saveTimer = null;
 let lastRange = null;          // last caret position inside the editor
@@ -82,6 +96,34 @@ function loadPref(key, def) {
 function savePref(key, value) {
   try { localStorage.setItem(key, value); } catch { /* storage not available */ }
 }
+
+/* ---------------- Settings (theme, accent color, font, text size, date) ---------------- */
+
+function loadSettings() {
+  let s = {};
+  try { s = JSON.parse(loadPref('settings', '{}')) || {}; } catch { /* ignore */ }
+  return { ...DEFAULT_SETTINGS, ...s };
+}
+
+const darkQuery = matchMedia('(prefers-color-scheme: dark)');
+
+function applySettings() {
+  const r = document.documentElement;
+  const dark = settings.theme === 'dark' || (settings.theme === 'system' && darkQuery.matches);
+  r.dataset.theme = dark ? 'dark' : 'light';
+  r.dataset.font = settings.font;
+  r.dataset.size = settings.size;
+  r.dataset.accent = settings.accent;
+  // color of the phone's status bar
+  document.querySelector('meta[name="theme-color"]').content = dark ? '#0e0e11' : '#f4f5f9';
+}
+
+function setSetting(key, value) {
+  settings[key] = value;
+  savePref('settings', JSON.stringify(settings));
+  applySettings();
+}
+darkQuery.addEventListener?.('change', () => { if (settings.theme === 'system') applySettings(); });
 
 /* ---------------- Database (IndexedDB) ---------------- */
 
@@ -127,19 +169,26 @@ function el(tag, cls, text) {
 }
 
 function show(v) {
+  const changed = view !== v;
   view = v;
-  for (const id of ['home', 'editor', 'folderEd']) $(id).hidden = id !== v;
+  for (const id of ['home', 'editor']) {
+    const e = $(id);
+    e.hidden = id !== v;
+    if (id === v && changed) restartAnimation(e, 'enter');
+  }
 }
 
+// "19. 11. · 14:35", with the year when it is not the current one
 function formatDate(ts) {
   const d = new Date(ts);
-  const now = new Date();
-  if (d.toDateString() === now.toDateString())
-    return d.toLocaleTimeString('hr-HR', { hour: '2-digit', minute: '2-digit' });
-  const opts = { day: 'numeric', month: 'short' };
-  if (d.getFullYear() !== now.getFullYear()) opts.year = 'numeric';
-  return d.toLocaleDateString('hr-HR', opts);
+  const pad = n => String(n).padStart(2, '0');
+  let date = `${d.getDate()}. ${d.getMonth() + 1}.`;
+  if (d.getFullYear() !== new Date().getFullYear()) date += ` ${d.getFullYear()}.`;
+  return `${date} · ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+const createdOf = n => n.created || n.updated;
+// time used for the cards (and their order), chosen in the settings
+const shownTime = n => (settings.dateMode === 'created' ? createdOf(n) : n.updated);
 
 // Convert old plain-text notes (from the first version) to HTML
 function textToHtml(text) {
@@ -267,6 +316,7 @@ function showSheet(build, onClose = null) {
   sh.replaceChildren();
   build(sh);
   sheetOnClose = onClose;
+  if (sheetOpen) restartAnimation(sh, 'swap');   // content changes inside an open sheet: fade it in
   if (!sheetOpen) {
     sheetOpen = true;
     sh.classList.add('open');
@@ -287,11 +337,11 @@ const closeSheet = () => (sheetOpen ? back() : Promise.resolve());
 
 function sheetTitle(text) { return el('h3', null, text); }
 
-// items: { icon | dot, label, onClick, danger, checked }
+// items: { icon | dot, label, onClick, danger, accent, checked, sub }
 function menuList(items) {
   const box = el('div', 'menu');
   for (const it of items) {
-    const b = el('button', 'menu-item' + (it.danger ? ' danger' : ''));
+    const b = el('button', 'menu-item' + (it.danger ? ' danger' : '') + (it.accent ? ' accent' : ''));
     b.type = 'button';
     if (it.dot) {
       const d = el('span', 'dot');
@@ -301,6 +351,7 @@ function menuList(items) {
       b.insertAdjacentHTML('beforeend', icon(it.icon));
     }
     b.append(el('span', null, it.label));
+    if (it.sub) b.append(el('span', 'sub', it.sub));
     if (it.checked) b.insertAdjacentHTML('beforeend', icon('check').replace('<svg', '<svg class="check"'));
     b.onclick = it.onClick;
     box.append(b);
@@ -410,7 +461,7 @@ function drawPinDots() {
 }
 
 function restartAnimation(e, cls) {
-  e.classList.remove('shake', 'swap');
+  e.classList.remove('shake', 'swap', 'enter');
   void e.offsetWidth;          // forces the browser to restart the animation
   e.classList.add(cls);
 }
@@ -555,27 +606,88 @@ async function getLockKey(title, allowSetup) {
 /* ---------------- Home ---------------- */
 
 function setFilter(f) {
+  if (f !== filter) {
+    animateList = true;
+    // leaving an unlocked "locked folder" forgets its key
+    if (openFolderId && f !== openFolderId) { openFolderId = null; folderKey = null; }
+  }
   filter = f;
-  savePref('filter', f);
 }
+
+// Croatian plural: 1 bilješka, 2 bilješke, 5 bilješki
+function plural(n, one, few, many) {
+  const d = n % 10, h = n % 100;
+  if (d === 1 && h !== 11) return `${n} ${one}`;
+  if (d >= 2 && d <= 4 && (h < 12 || h > 14)) return `${n} ${few}`;
+  return `${n} ${many}`;
+}
+const notesCount = n => plural(n, 'bilješka', 'bilješke', 'bilješki');
+
+// dark or white text, whichever is easier to read on this color
+function textOn(hex) {
+  const v = parseInt(hex.slice(1), 16);
+  const lum = 0.299 * (v >> 16) + 0.587 * ((v >> 8) & 255) + 0.114 * (v & 255);
+  return lum > 170 ? '#111114' : '#ffffff';
+}
+
+// time of the last writing in a folder; the most active folder comes first
+function folderActivity(f, notes) {
+  let t = f.created || 0;
+  for (const n of notes) if (n.folderId === f.id && n.updated > t) t = n.updated;
+  return t;
+}
+
+async function loadFolders(notes) {
+  notes = notes || await getAll('notes');
+  const list = await getAll('folders');
+  const act = new Map(list.map(f => [f.id, folderActivity(f, notes)]));
+  folders = list.sort((a, b) => act.get(b.id) - act.get(a.id) || a.name.localeCompare(b.name, 'hr'));
+  return notes;
+}
+
+// notes of a locked folder stay hidden (also in "Sve" and in search) until the folder is opened with the PIN
+const folderHidden = id => {
+  const f = id && folderById(id);
+  return !!(f && f.locked && openFolderId !== f.id);
+};
+
+// switch to home, all or a folder; a locked folder asks for the PIN first
+async function selectFilter(id) {
+  const f = folderById(id);
+  if (f && f.locked && openFolderId !== id) {
+    const key = await getLockKey(`Mapa „${f.name}”`, false);
+    if (!key) return false;
+    setFilter(id);
+    openFolderId = id;
+    folderKey = key;
+    return true;
+  }
+  setFilter(id);
+  return true;
+}
+const goTo = async id => { if (await selectFilter(id)) render(); };
 
 function renderHeader() {
   const f = folderById(filter);
-  $('homeTitle').textContent = f ? f.name : filter === 'all' ? 'Sve bilješke' : 'Bilješke';
+  const h = $('homeTitle');
+  h.textContent = f ? f.name : filter === 'all' ? 'Sve bilješke' : 'Bilješke';
+  if (f?.locked) h.insertAdjacentHTML('beforeend', `<span class="lock-ic">${icon('unlock')}</span>`);
   const next = viewMode === 'grid' ? 'list' : 'grid';
   $('viewBtn').innerHTML = icon(next);
   $('viewBtn').setAttribute('aria-label', next === 'grid' ? 'Prikaz mreže' : 'Prikaz popisa');
+  $('folderMenuBtn').hidden = !f;
   renderTabs();
 }
 
 function renderTabs() {
   const box = $('tabs');
+  const scroll = box.scrollLeft;
   box.replaceChildren();
   const tab = (id, label) => {
     const b = el('button', 'tab' + (filter === id ? ' active' : ''));
     b.type = 'button';
     b.setAttribute('aria-label', label);
-    b.onclick = () => { setFilter(id); render(); };
+    b.onclick = () => goTo(id);
     box.append(b);
     return b;
   };
@@ -584,31 +696,49 @@ function renderTabs() {
   home.innerHTML = icon('home');
   for (const f of folders) {
     const b = tab(f.id, 'Mapa ' + f.name);
+    b.style.setProperty('--tab-color', f.color);
+    b.style.setProperty('--tab-fg', textOn(f.color));
     const d = el('span', 'dot');
     d.style.background = f.color;
     b.append(d, el('span', 'label', f.name));
+    if (f.locked) b.insertAdjacentHTML('beforeend', `<span class="mini">${icon(openFolderId === f.id ? 'unlock' : 'lock')}</span>`);
   }
   const all = tab('all', 'Sve bilješke');      // last, pushed to the right edge
   all.classList.add('all');
   all.textContent = 'Sve';
-  box.querySelector('.active')?.scrollIntoView({ inline: 'nearest', block: 'nearest' });
+  box.scrollLeft = scroll;
+  const active = box.querySelector('.active');
+  if (active) {
+    // scroll the active tab into view inside the row only (not the whole page)
+    const l = active.offsetLeft - 10, r = active.offsetLeft + active.offsetWidth + 34 - box.clientWidth;
+    if (box.scrollLeft > l) box.scrollLeft = l;
+    else if (box.scrollLeft < r) box.scrollLeft = r;
+  }
 }
 
 async function render() {
-  folders = (await getAll('folders')).sort((a, b) => a.name.localeCompare(b.name, 'hr'));
-  if (filter !== 'all' && filter !== 'home' && !folderById(filter)) setFilter('home');
+  const all = await loadFolders();
+  if (filter !== 'all' && filter !== 'home' && (!folderById(filter) || folderHidden(filter))) setFilter('home');
   renderHeader();
 
-  let notes = await getAll('notes');
-  const q = searchOpen ? norm(query.trim()) : '';
-  if (q) notes = notes.filter(n => norm(n.title + ' ' + (n.locked ? '' : n.body)).includes(q));   // search covers all folders
-  else if (filter === 'home') notes = notes.filter(n => !n.folderId);
-  else if (filter !== 'all') notes = notes.filter(n => n.folderId === filter);
-  notes.sort((a, b) => b.updated - a.updated);
+  let notes = all.filter(n => !folderHidden(n.folderId));
+  const q = searchOpen ? query.trim() : '';
+  let scores = null;
+  if (q) {                                    // search covers all folders
+    scores = searchNotes(notes, q);
+    notes = notes.filter(n => scores.has(n.id));
+    notes.sort((a, b) => scores.get(b.id) - scores.get(a.id) || shownTime(b) - shownTime(a));
+  } else {
+    if (filter === 'home') notes = notes.filter(n => !n.folderId);
+    else if (filter !== 'all') notes = notes.filter(n => n.folderId === filter);
+    notes.sort((a, b) => shownTime(b) - shownTime(a));
+  }
 
   const list = $('list');
   list.className = 'list mode-' + viewMode;
   list.replaceChildren();
+  const anim = animateList;
+  animateList = false;
   if (!notes.length) {
     const msg = q ? 'Ništa nije pronađeno.'
       : searchOpen ? 'Upiši pojam za pretragu.'
@@ -619,7 +749,14 @@ async function render() {
     return;
   }
   const showFolder = filter === 'all' || !!q;
-  for (const n of notes) list.append(viewMode === 'grid' ? gridCard(n, showFolder) : listCard(n, showFolder));
+  notes.forEach((n, i) => {
+    const card = viewMode === 'grid' ? gridCard(n, showFolder) : listCard(n, showFolder);
+    if (anim && i < 14) {          // only the first cards, the rest are below the screen anyway
+      card.classList.add('anim');
+      card.style.setProperty('--i', i);
+    }
+    list.append(card);
+  });
 }
 
 function moreButton(n) {
@@ -638,17 +775,27 @@ function metaLine(n, f, showFolder, withDot) {
     d.style.background = f.color;
     m.append(d);
   }
-  const parts = [formatDate(n.updated)];
+  const parts = [formatDate(shownTime(n))];
   if (f && showFolder) parts.push(f.name);
   if (n.images) parts.push(n.images === 1 ? '1 slika' : n.images + ' slike');
   m.append(parts.join(' · '));
   return m;
 }
 
-function listCard(n, showFolder) {
-  const f = folderById(n.folderId);
+function noteCard(n) {
   const card = el('article', 'note');
-  if (f) card.style.borderLeftColor = f.color;
+  card.dataset.id = n.id;
+  const f = folderById(n.folderId);
+  if (f) {
+    card.classList.add('in-folder');
+    card.style.setProperty('--fc', f.color);
+  }
+  card.onclick = () => openNote(n);
+  return [card, f];
+}
+
+function listCard(n, showFolder) {
+  const [card, f] = noteCard(n);
   card.append(el('b', null, n.title || 'Bez naslova'));
   if (n.locked) {
     const p = el('div', 'preview locked');
@@ -656,17 +803,15 @@ function listCard(n, showFolder) {
     p.append('Zaključano');
     card.append(p);
   } else {
-    const text = (n.body || '').replace(/\s+/g, ' ').slice(0, 140);
+    const text = (n.body || '').replace(/\s+/g, ' ').slice(0, 160);
     if (text) card.append(el('div', 'preview', text));
   }
   card.append(metaLine(n, f, showFolder, false), moreButton(n));
-  card.onclick = () => openNote(n);
   return card;
 }
 
 function gridCard(n, showFolder) {
-  const f = folderById(n.folderId);
-  const card = el('article', 'note');
+  const [card, f] = noteCard(n);
   const th = el('div', 'thumb rich');
   if (n.locked) {
     th.classList.add('locked');
@@ -676,16 +821,80 @@ function gridCard(n, showFolder) {
     if (!th.textContent.trim() && !th.querySelector('img')) th.classList.add('empty-thumb');
   }
   card.append(th, el('div', 'name', n.title || 'Bez naslova'), metaLine(n, f, showFolder, true), moreButton(n));
-  card.onclick = () => openNote(n);
   return card;
 }
 
-/* ---------------- Folders drawer ---------------- */
+/* ---------------- Search that forgives typos ----------------
+   "promijena" finds "promjena", "biljske" finds "bilješke". Every word of the query
+   must match a word of the note: exactly, as a part of it, or with 1–2 wrong letters. */
+
+const words = s => norm(s).split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+
+// edit distance (insert, delete, change, swap two letters); gives up above `max`
+function editDistance(a, b, max) {
+  if (Math.abs(a.length - b.length) > max) return max + 1;
+  let prev2 = null, prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    let rowMin = i;
+    for (let j = 1; j <= b.length; j++) {
+      let v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      if (prev2 && i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) v = Math.min(v, prev2[j - 2] + 1);
+      cur.push(v);
+      if (v < rowMin) rowMin = v;
+    }
+    if (rowMin > max) return max + 1;
+    prev2 = prev;
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+const allowedTypos = len => (len >= 8 ? 2 : len >= 4 ? 1 : 0);
+
+// how well one query word matches one word of the note (0 = not at all)
+function wordScore(q, w) {
+  if (w === q) return 4;
+  if (w.startsWith(q)) return 3;
+  if (w.includes(q)) return 2;
+  const max = allowedTypos(q.length);
+  if (!max) return 0;
+  if (editDistance(q, w, max) <= max) return 1.5;
+  // the word is still being typed: compare with the beginning of the note's word
+  if (w.length > q.length && editDistance(q, w.slice(0, q.length), max) <= max) return 1;
+  return 0;
+}
+
+// returns Map id -> score for notes that match
+function searchNotes(notes, query) {
+  const qWords = words(query);
+  const phrase = norm(query);
+  const res = new Map();
+  if (!qWords.length) return res;
+  for (const n of notes) {
+    const titleW = words(n.title);
+    const bodyW = n.locked ? [] : words(n.body);
+    let total = 0;
+    for (const q of qWords) {
+      let best = 0;
+      for (const w of titleW) best = Math.max(best, wordScore(q, w) * 2);   // title counts double
+      if (best < 8) for (const w of bodyW) { best = Math.max(best, wordScore(q, w)); if (best >= 4) break; }
+      if (!best) { total = 0; break; }
+      total += best;
+    }
+    if (!total) continue;
+    if (norm(n.title).includes(phrase)) total += 6;
+    res.set(n.id, total);
+  }
+  return res;
+}
+
+/* ---------------- Drawer (☰) ---------------- */
 
 async function openDrawer() {
-  const notes = await getAll('notes');
+  const notes = await loadFolders();
   const count = id => notes.filter(n => (n.folderId || null) === id).length;
-  const box = $('folderList');
+  const box = $('drawerList');
   box.replaceChildren();
 
   const row = (active, extraCls) => el('div', 'folder-row' + (active ? ' active' : '') + (extraCls ? ' ' + extraCls : ''));
@@ -698,40 +907,44 @@ async function openDrawer() {
     b.onclick = onClick;
     return b;
   };
+  const closeThen = fn => async () => { await back(); fn(); };
 
   const home = row(filter === 'home');
-  home.append(pickBtn('home', 'Bilješke', count(null), async () => { setFilter('home'); await back(); render(); }));
+  home.append(pickBtn('home', 'Bilješke', count(null), closeThen(() => goTo('home'))));
   const all = row(filter === 'all');
-  all.append(pickBtn('notes', 'Sve bilješke', notes.length, async () => { setFilter('all'); await back(); render(); }));
+  all.append(pickBtn('notes', 'Sve bilješke', notes.filter(n => !folderHidden(n.folderId)).length, closeThen(() => goTo('all'))));
   box.append(home, all);
 
+  if (folders.length) box.append(el('h4', 'drawer-sub', 'Mape'));
   for (const f of folders) {
     const r = row(filter === f.id);
     const d = el('span', 'dot');
     d.style.background = f.color;
-    r.append(pickBtn(d, f.name, count(f.id), async () => { setFilter(f.id); await back(); render(); }));
+    const pick = pickBtn(d, f.name, count(f.id), closeThen(() => goTo(f.id)));
+    if (f.locked) pick.querySelector('.label').insertAdjacentHTML('afterend', `<span class="mini">${icon('lock')}</span>`);
+    r.append(pick);
     const edit = el('button', 'icon-btn');
     edit.type = 'button';
     edit.innerHTML = icon('edit');
     edit.setAttribute('aria-label', 'Uredi mapu ' + f.name);
-    edit.onclick = async () => { await back(); openFolderEd(f); };
+    edit.onclick = closeThen(async () => { if (await folderSheet(f)) render(); });
     r.append(edit);
     box.append(r);
   }
-
   const add = row(false, 'add');
-  add.append(pickBtn('plus', 'Nova mapa', null, async () => { await back(); openFolderEd(); }));
+  add.append(pickBtn('plus', 'Nova mapa', null, closeThen(createFolder)));
   box.append(add);
 
-  // backup
-  box.append(el('h4', 'drawer-sub', 'Sigurnosna kopija'));
+  box.append(el('h4', 'drawer-sub', 'Aplikacija'));
+  const set = row(false);
+  set.append(pickBtn('settings', 'Postavke', null, closeThen(openSettings)));
   const last = Number(loadPref('lastBackup', 0));
   const exp = row(false);
-  exp.append(pickBtn('download', 'Izvezi kopiju', null, async () => { await back(); exportBackup(); }));
-  exp.querySelector('.pick').append(el('span', 'count', last ? formatDate(last) : 'nikad'));
+  exp.append(pickBtn('download', 'Izvezi kopiju', null, closeThen(openExportSheet)));
+  exp.querySelector('.pick').append(el('span', 'count', last ? formatDate(last).split(' · ')[0] : 'nikad'));
   const imp = row(false);
-  imp.append(pickBtn('upload', 'Uvezi kopiju', null, () => { $('importInput').click(); back(); }));
-  box.append(exp, imp, el('p', 'version', 'Bilješke · verzija ' + APP_VERSION));
+  imp.append(pickBtn('upload', 'Uvezi', null, closeThen(openImportSheet)));
+  box.append(set, exp, imp, el('p', 'version', 'Bilješke · verzija ' + APP_VERSION));
 
   drawerOpen = true;
   $('drawer').classList.add('open');
@@ -743,9 +956,253 @@ async function openDrawer() {
   });
 }
 
+/* ---------------- Settings ---------------- */
+
+function openSettings() {
+  showSheet(sh => {
+    sh.append(sheetTitle('Postavke'));
+    const group = label => {
+      const g = el('div', 'set-group');
+      g.append(el('div', 'set-label', label));
+      sh.append(g);
+      return g;
+    };
+    // segmented control: options [value, label, class]
+    const seg = (label, key, options, after) => {
+      const box = el('div', 'seg');
+      for (const [v, text, cls] of options) {
+        const b = el('button', (settings[key] === v ? 'sel ' : '') + (cls || ''), text);
+        b.type = 'button';
+        b.onclick = () => {
+          setSetting(key, v);
+          for (const x of box.children) x.classList.toggle('sel', x === b);
+          after?.();
+        };
+        box.append(b);
+      }
+      group(label).append(box);
+    };
+    seg('Tema', 'theme', [['system', 'Sustav'], ['light', 'Svijetla'], ['dark', 'Tamna']]);
+
+    const acc = el('div', 'accents');
+    for (const [v, color, name] of ACCENTS) {
+      const b = el('button', 'sw' + (settings.accent === v ? ' sel' : ''));
+      b.type = 'button';
+      b.style.background = color;
+      b.setAttribute('aria-label', name);
+      b.onclick = () => {
+        setSetting('accent', v);
+        for (const x of acc.children) x.classList.toggle('sel', x === b);
+      };
+      acc.append(b);
+    }
+    group('Boja naglaska').append(acc);
+
+    seg('Font bilješki', 'font', [['serif', 'Serif (kao Claude)', 'serif'], ['sans', 'Obični', 'sans']]);
+    seg('Veličina teksta', 'size', [['m', 'Normalna'], ['l', 'Veća'], ['xl', 'Najveća']]);
+    seg('Datum i redoslijed bilješki', 'dateMode', [['updated', 'Zadnja izmjena'], ['created', 'Stvoreno']],
+      () => { animateList = true; render(); });
+  });
+}
+
+/* ---------------- Folders ---------------- */
+
+// Name and color of a folder in the bottom sheet. Resolves with the saved folder, or null.
+function folderSheet(f) {
+  return new Promise(resolve => {
+    let saved = null;
+    const cur = f ? { ...f } : { id: crypto.randomUUID(), name: '', color: COLORS[5], created: Date.now() };
+    showSheet(sh => {
+      const form = el('form', 'pw-form');
+      form.append(el('h3', null, f ? 'Uredi mapu' : 'Nova mapa'));
+      const name = el('input');
+      name.placeholder = 'Ime mape';
+      name.maxLength = 40;
+      name.autocomplete = 'off';
+      name.value = cur.name;
+      const sw = el('div', 'swatches');
+      const draw = () => {
+        sw.replaceChildren();
+        for (const c of COLORS) {
+          const b = el('button', 'sw' + (c === cur.color ? ' sel' : ''));
+          b.type = 'button';
+          b.style.background = c;
+          b.setAttribute('aria-label', 'Boja ' + c);
+          b.onclick = () => { cur.color = c; draw(); };
+          sw.append(b);
+        }
+      };
+      draw();
+      const err = el('p', 'error');
+      const cancel = el('button', 'secondary', 'Odustani');
+      cancel.type = 'button';
+      cancel.onclick = () => back();
+      const ok = el('button', null, f ? 'Spremi' : 'Napravi mapu');
+      ok.type = 'submit';
+      const actions = el('div', 'actions');
+      actions.append(cancel, ok);
+      form.onsubmit = async e => {
+        e.preventDefault();
+        cur.name = name.value.trim();
+        if (!cur.name) { err.textContent = 'Upiši ime mape.'; name.focus(); return; }
+        await put('folders', cur);
+        saved = cur;
+        await closeSheet();
+      };
+      form.append(name, sw, err, actions);
+      sh.append(form);
+      if (!f) setTimeout(() => name.focus(), 80);
+    }, () => resolve(saved));
+  });
+}
+
+async function createFolder() {
+  const f = await folderSheet();
+  if (!f) return;
+  setFilter(f.id);
+  toast(`Mapa „${f.name}” je napravljena`);
+  render();
+}
+
+// all folders as tiles: easier than scrolling the tabs when there are many
+async function openAllFolders() {
+  const notes = await loadFolders();
+  showSheet(sh => {
+    sh.append(sheetTitle('Mape'));
+    const grid = el('div', 'folder-grid');
+    let i = 0;
+    const tile = (color, iconName, name, sub, active, onClick) => {
+      const b = el('button', 'folder-tile' + (active ? ' active' : ''));
+      b.type = 'button';
+      b.style.setProperty('--fc', color);
+      b.style.setProperty('--i', i++);
+      const ic = el('span', 'ft-icon');
+      ic.innerHTML = icon(iconName);
+      b.append(ic, el('span', 'ft-name', name));
+      if (sub) b.append(el('span', 'ft-count', sub));
+      b.onclick = onClick;
+      grid.append(b);
+      return b;
+    };
+    const open = id => async () => { await closeSheet(); goTo(id); };
+    tile('var(--accent)', 'home', 'Bilješke', notesCount(notes.filter(n => !n.folderId).length), filter === 'home', open('home'));
+    tile('var(--muted)', 'notes', 'Sve bilješke', notesCount(notes.filter(n => !folderHidden(n.folderId)).length), filter === 'all', open('all'));
+    for (const f of folders) {
+      const t = tile(f.color, 'folder', f.name, notesCount(notes.filter(n => n.folderId === f.id).length), filter === f.id, open(f.id));
+      if (f.locked) t.querySelector('.ft-icon').insertAdjacentHTML('beforeend', icon('lock'));
+    }
+    const add = tile('var(--accent)', 'plus', 'Nova mapa', null, false, createFolder);
+    add.classList.add('add');
+    sh.append(grid);
+  });
+}
+
+// ⋮ in the app bar while a folder is open
+function openFolderMenu() {
+  const f = folderById(filter);
+  if (!f) return;
+  showSheet(sh => {
+    sh.append(sheetTitle(f.name));
+    sh.append(menuList([
+      { icon: 'palette', label: 'Uredi izgled (ime i boja)', onClick: async () => { if (await folderSheet(f)) render(); } },
+      f.locked
+        ? { icon: 'unlock', label: 'Otključaj mapu', onClick: () => unlockFolder(f) }
+        : { icon: 'lock', label: 'Zaključaj mapu', onClick: () => lockFolder(f) },
+      { icon: 'trash', label: 'Obriši mapu', danger: true, onClick: () => deleteFolder(f) },
+    ]));
+  });
+}
+
+function runTransaction(stores, fill) {
+  return new Promise((res, rej) => {
+    const t = db.transaction(stores, 'readwrite');
+    fill(t);
+    t.oncomplete = res;
+    t.onerror = () => rej(t.error);
+  });
+}
+
+async function lockFolder(f) {
+  const ok = await confirmSheet({
+    title: 'Zaključati mapu?',
+    text: `Za otvaranje mape „${f.name}” trebat će PIN. Bilješke u njoj se šifriraju i ne vide se u „Sve” ni u pretrazi dok je mapa zaključana.`,
+    confirmLabel: 'Zaključaj',
+  });
+  if (!ok) return;
+  const key = await getLockKey('Zaključaj mapu', true);
+  if (!key) return;
+  const updated = [];
+  for (const n of (await getAll('notes')).filter(x => x.folderId === f.id && !x.locked)) {
+    const enc = await encryptJSON(key, { html: noteHtml(n), body: n.body || '' });
+    updated.push({ ...n, html: '', body: '', images: 0, locked: true, lockedByFolder: true, enc });
+  }
+  // one transaction: the folder and all its notes are locked together
+  await runTransaction(['notes', 'folders'], t => {
+    for (const n of updated) t.objectStore('notes').put(n);
+    t.objectStore('folders').put({ ...f, locked: true });
+  });
+  openFolderId = f.id;              // stays open until you leave it
+  folderKey = key;
+  toast('Mapa je zaključana');
+  render();
+}
+
+async function unlockFolder(f) {
+  await closeSheet();
+  const key = await getLockKey('Otključaj mapu', false);
+  if (!key) return;
+  const updated = [];
+  for (const n of (await getAll('notes')).filter(x => x.folderId === f.id && x.lockedByFolder)) {
+    const data = await decryptJSON(key, n.enc);
+    const plain = { ...n, html: data.html, body: data.body, images: countImages(data.html) };
+    delete plain.locked; delete plain.enc; delete plain.lockedByFolder;
+    updated.push(plain);
+  }
+  const folder = { ...f };
+  delete folder.locked;
+  await runTransaction(['notes', 'folders'], t => {
+    for (const n of updated) t.objectStore('notes').put(n);
+    t.objectStore('folders').put(folder);
+  });
+  openFolderId = null;
+  folderKey = null;
+  toast('Mapa je otključana');
+  render();
+}
+
+async function deleteFolder(f) {
+  const ok = await confirmSheet({
+    title: 'Obrisati mapu?',
+    text: `Mapa „${f.name}” se briše, a bilješke iz nje ostaju i prelaze u bilješke bez mape.` +
+          (f.locked ? ' Bilješke iz zaključane mape ostaju zaključane PIN-om.' : ''),
+    confirmLabel: 'Obriši mapu',
+    danger: true,
+  });
+  if (!ok) return;
+  const notes = (await getAll('notes')).filter(n => n.folderId === f.id);
+  await runTransaction(['notes', 'folders'], t => {
+    for (const n of notes) {
+      const m = { ...n, folderId: null };
+      delete m.lockedByFolder;            // stays locked as a normal locked note
+      t.objectStore('notes').put(m);
+    }
+    t.objectStore('folders').delete(f.id);
+  });
+  setFilter('home');
+  toast('Mapa je obrisana');
+  render();
+}
+
 /* ---------------- Note menu (⋮) ---------------- */
 
+// key for a locked note: no PIN needed inside an already opened locked folder
+function keyFor(n, title) {
+  if (folderKey && n.folderId && n.folderId === openFolderId) return Promise.resolve(folderKey);
+  return getLockKey(title, false);
+}
+
 function openNoteMenu(n) {
+  const inLockedFolder = !!folderById(n.folderId)?.locked;
   showSheet(sh => {
     sh.append(sheetTitle(n.title || 'Bez naslova'));
     const items = [
@@ -753,9 +1210,8 @@ function openNoteMenu(n) {
     ];
     if (navigator.share) items.push({ icon: 'share', label: 'Podijeli', onClick: () => shareNote(n) });
     items.push({ icon: 'copy', label: 'Kopiraj tekst', onClick: () => copyNote(n) });
-    items.push(n.locked
-      ? { icon: 'unlock', label: 'Otključaj', onClick: () => unlockNote(n) }
-      : { icon: 'lock', label: 'Zaključaj', onClick: () => lockNote(n) });
+    if (!n.locked) items.push({ icon: 'lock', label: 'Zaključaj', onClick: () => lockNote(n) });
+    else if (!inLockedFolder) items.push({ icon: 'unlock', label: 'Otključaj', onClick: () => unlockNote(n) });
     items.push({ icon: 'trash', label: 'Obriši', danger: true, onClick: () => deleteNote(n) });
     sh.append(menuList(items));
   });
@@ -764,28 +1220,48 @@ function openNoteMenu(n) {
 function openMoveSheet(n) {
   showSheet(sh => {
     sh.append(sheetTitle('Premjesti u mapu'));
-    const move = async (id, name) => {
-      await updateNote(n.id, { folderId: id });
-      await closeSheet();
-      toast(id ? `Premješteno u „${name}”` : 'Uklonjeno iz mape');
-      render();
-    };
-    const items = [{ icon: 'notes', label: 'Bez mape', checked: !n.folderId, onClick: () => move(null) }];
+    const items = [{ icon: 'notes', label: 'Bez mape', checked: !n.folderId, onClick: () => moveNote(n, null) }];
     for (const f of folders)
-      items.push({ dot: f.color, label: f.name, checked: n.folderId === f.id, onClick: () => move(f.id, f.name) });
+      items.push({ dot: f.color, label: f.name, sub: f.locked ? 'zaključana' : '', checked: n.folderId === f.id, onClick: () => moveNote(n, f) });
+    items.push({
+      icon: 'plus', label: 'Premjesti u novu mapu…', accent: true,
+      onClick: async () => { const f = await folderSheet(); if (f) await moveNote(n, f); },
+    });
     sh.append(menuList(items));
-    if (!folders.length) sh.append(el('p', 'hint', 'Još nemaš mapa. Napravi ih u izborniku mapa (gore lijevo).'));
   });
 }
 
-// plain text of a note, asks for the password if it is locked
+async function moveNote(n, f) {
+  await closeSheet();
+  const fresh = await getOne('notes', n.id);
+  if (!fresh) return;
+  let patch = { folderId: f ? f.id : null };
+  if (f?.locked && !fresh.locked) {
+    // a note moved into a locked folder is encrypted as well
+    const key = await keyFor({ folderId: f.id }, 'Premjesti u zaključanu mapu');
+    if (!key) return;
+    const enc = await encryptJSON(key, { html: noteHtml(fresh), body: fresh.body || '' });
+    patch = { ...patch, html: '', body: '', images: 0, locked: true, lockedByFolder: true, enc };
+  } else if (fresh.lockedByFolder && !f?.locked) {
+    // it was locked only because of its folder, so leaving the folder unlocks it
+    const key = await keyFor(fresh, 'Premjesti iz zaključane mape');
+    if (!key) return;
+    const data = await decryptJSON(key, fresh.enc);
+    patch = { ...patch, html: data.html, body: data.body, images: countImages(data.html), locked: undefined, enc: undefined, lockedByFolder: undefined };
+  }
+  await updateNote(n.id, patch);
+  toast(f ? `Premješteno u „${f.name}”` : 'Uklonjeno iz mape');
+  render();
+}
+
+// plain text of a note, asks for the PIN if it is locked
 async function noteText(n, why) {
   let fresh = await getOne('notes', n.id);
   if (!fresh) return null;
   let body = fresh.body || '';
   if (fresh.locked) {
     await closeSheet();
-    const key = await getLockKey(why, false);
+    const key = await keyFor(fresh, why);
     if (!key) return null;
     fresh = await getOne('notes', n.id);
     body = (await decryptJSON(key, fresh.enc)).body;
@@ -834,7 +1310,7 @@ async function unlockNote(n) {
   if (!key) return;
   const fresh = await getOne('notes', n.id);
   const data = await decryptJSON(key, fresh.enc);
-  await updateNote(n.id, { html: data.html, body: data.body, images: countImages(data.html), locked: undefined, enc: undefined });
+  await updateNote(n.id, { html: data.html, body: data.body, images: countImages(data.html), locked: undefined, enc: undefined, lockedByFolder: undefined });
   toast('Bilješka je otključana');
   render();
 }
@@ -848,13 +1324,19 @@ async function deleteNote(n) {
   });
   if (!ok) return;
   await del('notes', n.id);
+  const card = $('list').querySelector(`[data-id="${CSS.escape(n.id)}"]`);
+  if (card) {                      // let the card fade out first
+    card.classList.add('leaving');
+    await new Promise(r => setTimeout(r, 200));
+  }
   toast('Bilješka je obrisana');
   render();
 }
 
 /* ---------------- Backup (export / import) ----------------
    One JSON file with all notes, folders and the PIN check.
-   Locked notes stay encrypted inside the file; open notes are readable. */
+   Without encryption: locked notes stay encrypted, other notes are readable.
+   With encryption (format 2): the whole file is encrypted with the PIN. */
 
 function toB64(bytes) {
   let bin = '';
@@ -875,29 +1357,326 @@ const backupReplacer = (k, v) =>
 const backupReviver = (k, v) =>
   v && typeof v === 'object' && typeof v.$b64 === 'string' ? fromB64(v.$b64) : v;
 
-async function exportBackup() {
+const today = () => new Date().toISOString().slice(0, 10);
+
+function openExportSheet() {
+  let encrypt = loadPref('encryptBackup', '1') === '1';
+  showSheet(sh => {
+    const box = el('div', 'pw-form');
+    box.append(el('h3', null, 'Izvezi kopiju'),
+      el('p', null, 'Kopija sadrži sve bilješke i mape. Spremi je na Google Drive pa je imaš i ako izgubiš ili promijeniš mobitel.'));
+    const tr = el('div', 'toggle-row');
+    const txt = el('div', 'txt', 'Šifriraj PIN-om');
+    txt.append(el('small', null, 'Bez PIN-a nitko ne može pročitati kopiju. Bez šifriranja su otvorene bilješke čitljive.'));
+    const sw = el('button', 'switch' + (encrypt ? ' on' : ''));
+    sw.type = 'button';
+    sw.setAttribute('role', 'switch');
+    sw.setAttribute('aria-label', 'Šifriraj PIN-om');
+    sw.setAttribute('aria-checked', String(encrypt));
+    sw.onclick = () => {
+      encrypt = !encrypt;
+      sw.classList.toggle('on', encrypt);
+      sw.setAttribute('aria-checked', String(encrypt));
+    };
+    tr.append(txt, sw);
+    box.append(tr);
+    sh.append(box);
+    const items = [];
+    if (navigator.canShare)
+      items.push({ icon: 'cloud', label: 'Spremi u Google Drive…', sub: 'ili drugdje', onClick: () => exportBackup('share', encrypt) });
+    items.push({ icon: 'phone', label: 'Spremi na uređaj', sub: 'Preuzimanja', onClick: () => exportBackup('download', encrypt) });
+    sh.append(menuList(items));
+  });
+}
+
+async function buildBackup(encrypt) {
   const data = {
     app: 'biljeske', format: 1, version: APP_VERSION, exported: Date.now(),
     notes: await getAll('notes'), folders: await getAll('folders'), meta: await getAll('meta'),
   };
-  const blob = new Blob([JSON.stringify(data, backupReplacer)], { type: 'application/json' });
+  let json = JSON.stringify(data, backupReplacer);
+  if (encrypt) {
+    const key = await getLockKey('Šifriraj kopiju', true);    // sets up a PIN if there is none yet
+    if (!key) return null;
+    const lock = await getOne('meta', 'lock');
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const enc = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, te.encode(json));
+    json = JSON.stringify({
+      app: 'biljeske', format: 2, encrypted: true, version: APP_VERSION, exported: data.exported,
+      lock: { salt: lock.salt, iterations: lock.iterations, check: lock.check },
+      payload: { iv, data: enc },
+    }, backupReplacer);
+  }
+  return json;
+}
+
+function downloadFile(file) {
   const a = el('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = `biljeske-kopija-${new Date().toISOString().slice(0, 10)}.json`;
+  a.href = URL.createObjectURL(file);
+  a.download = file.name;
   document.body.append(a);
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(a.href), 30000);
-  savePref('lastBackup', String(Date.now()));
-  toast('Kopija je spremljena u Preuzimanja');
 }
 
-async function importBackup(file) {
-  let data;
-  try {
-    data = JSON.parse(await file.text(), backupReviver);
-  } catch {
-    data = null;
+async function exportBackup(how, encrypt) {
+  savePref('encryptBackup', encrypt ? '1' : '0');
+  await closeSheet();
+  const json = await buildBackup(encrypt);
+  if (!json) return;
+  const base = `biljeske-kopija-${today()}${encrypt ? '-sifrirano' : ''}`;
+  const file = new File([json], base + '.json', { type: 'application/json' });
+  if (how === 'share') {
+    // Android does not share .json files, so a .txt with the same content is used there (import accepts both)
+    const shareFile = navigator.canShare({ files: [file] }) ? file : new File([json], base + '.txt', { type: 'text/plain' });
+    try {
+      if (!navigator.canShare({ files: [shareFile] })) throw new Error('files');
+      await navigator.share({ files: [shareFile], title: shareFile.name });
+      savePref('lastBackup', String(Date.now()));
+      toast('Kopija je poslana');
+      return;
+    } catch (e) {
+      if (e.name === 'AbortError') return;
+      toast('Dijeljenje ne radi ovdje, kopija ide u Preuzimanja');
+    }
+  }
+  downloadFile(file);
+  savePref('lastBackup', String(Date.now()));
+  if (how !== 'share') toast('Kopija je spremljena u Preuzimanja');
+}
+
+/* ---- Import: own backups, Google Keep (Takeout .zip / .json), text files ---- */
+
+function openImportSheet() {
+  showSheet(sh => {
+    sh.append(sheetTitle('Uvezi'));
+    sh.append(el('p', null, 'Odaberi jednu ili više datoteka. Vrsta se prepozna sama.'));
+    const pick = () => { $('importInput').click(); back(); };
+    sh.append(menuList([
+      { icon: 'upload', label: 'Sigurnosna kopija', sub: '.json / .txt', onClick: pick },
+      { icon: 'apps', label: 'Google Keep', sub: 'Takeout .zip', onClick: pick },
+      { icon: 'notes', label: 'Tekstualne datoteke', sub: '.txt, .md', onClick: pick },
+    ]));
+    sh.append(el('p', 'hint',
+      'Google Keep: takeout.google.com → odaberi samo Keep → preuzmi .zip. ' +
+      'Iz Samsung Notesa ili Keepa možeš i otvoriti bilješku → Dijeli → Bilješke, i ona se odmah doda ovdje.'));
+  });
+}
+
+// minimal ZIP reader (stored or deflate entries), enough for Google Takeout
+async function openZip(file) {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  const dv = new DataView(buf.buffer);
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 65557); i--)
+    if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+  if (eocd < 0) throw new Error('not a zip');
+  let count = dv.getUint16(eocd + 10, true);
+  let off = dv.getUint32(eocd + 16, true);
+  const dec = new TextDecoder();
+  const entries = new Map();
+  for (let i = 0; i < count && dv.getUint32(off, true) === 0x02014b50; i++) {
+    const method = dv.getUint16(off + 10, true);
+    let csize = dv.getUint32(off + 20, true);
+    const nameLen = dv.getUint16(off + 28, true), extraLen = dv.getUint16(off + 30, true), commentLen = dv.getUint16(off + 32, true);
+    let local = dv.getUint32(off + 42, true);
+    const name = dec.decode(buf.subarray(off + 46, off + 46 + nameLen));
+    // ZIP64: sizes that do not fit 32 bits are in an extra field
+    if (csize === 0xffffffff || local === 0xffffffff) {
+      let p = off + 46 + nameLen;
+      const end = p + extraLen;
+      while (p + 4 <= end) {
+        const id = dv.getUint16(p, true), size = dv.getUint16(p + 2, true);
+        if (id === 1) {
+          let q = p + 4;
+          if (dv.getUint32(off + 24, true) === 0xffffffff) q += 8;          // uncompressed size
+          if (csize === 0xffffffff) { csize = Number(dv.getBigUint64(q, true)); q += 8; }
+          if (local === 0xffffffff) local = Number(dv.getBigUint64(q, true));
+        }
+        p += 4 + size;
+      }
+    }
+    entries.set(name, { method, csize, local });
+    off += 46 + nameLen + extraLen + commentLen;
+  }
+  const read = async name => {
+    const e = entries.get(name);
+    const start = e.local + 30 + dv.getUint16(e.local + 26, true) + dv.getUint16(e.local + 28, true);
+    const data = buf.subarray(start, start + e.csize);
+    if (e.method === 0) return data;
+    if (e.method !== 8) throw new Error('compression');
+    const stream = new Blob([data]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  };
+  return { names: [...entries.keys()].filter(n => !n.endsWith('/')), read };
+}
+
+// short stable id, so importing the same file twice does not duplicate notes
+function hashId(prefix, str) {
+  let h1 = 0x811c9dc5, h2 = 0x01000193;
+  for (let i = 0; i < str.length; i++) {
+    const c = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 16777619);
+    h2 = Math.imul(h2 + c, 2246822519) ^ (h2 >>> 13);
+  }
+  return prefix + '-' + (h1 >>> 0).toString(36) + (h2 >>> 0).toString(36);
+}
+
+const escapeHtml = s => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function htmlToText(html) {
+  const d = new DOMParser().parseFromString('<body>' + html + '</body>', 'text/html').body;
+  for (const b of d.querySelectorAll('br')) b.replaceWith('\n');
+  for (const b of d.querySelectorAll('div,p,li,h1,h2,h3')) b.append('\n');
+  return d.textContent.replace(/​/g, '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+const isKeepNote = o => o && typeof o === 'object' && !Array.isArray(o) &&
+  ('textContent' in o || 'listContent' in o || 'textContentHtml' in o) && ('userEditedTimestampUsec' in o || 'createdTimestampUsec' in o);
+
+// Google Keep note (from Takeout) -> our note; readFile(path) gives attachment bytes when importing a zip
+async function fromKeep(k, readFile) {
+  if (k.isTrashed) return null;
+  let html = k.textContentHtml ? sanitize(k.textContentHtml) : textToHtml(k.textContent || '');
+  if (Array.isArray(k.listContent) && k.listContent.length) {
+    html += '<ul class="todo">' + k.listContent.map(i =>
+      `<li${i.isChecked ? ' data-checked="true"' : ''}>${escapeHtml(String(i.text || '')) || '<br>'}</li>`).join('') + '</ul>';
+  }
+  for (const a of k.attachments || []) {
+    if (!readFile || !/^image\//.test(a.mimetype || '') || !a.filePath) continue;
+    try {
+      const bytes = await readFile(a.filePath);
+      if (bytes) html += `<img src="${await fileToDataUrl(new Blob([bytes], { type: a.mimetype }))}" alt="">`;
+    } catch { /* attachment missing: skip it */ }
+  }
+  const created = Math.round(Number(k.createdTimestampUsec) / 1000) || Date.now();
+  const updated = Math.round(Number(k.userEditedTimestampUsec) / 1000) || created;
+  return {
+    id: hashId('keep', String(k.createdTimestampUsec) + '|' + (k.title || '')),
+    title: String(k.title || '').slice(0, 200), html, created, updated,
+    folderName: k.labels?.[0]?.name || 'Google Keep',
+  };
+}
+
+function fromText(fileName, text, modified) {
+  const title = fileName.replace(/^.*\//, '').replace(/\.(txt|md|markdown)$/i, '');
+  return {
+    id: hashId('txt', fileName + '|' + text.length + '|' + text.slice(0, 200)),
+    title: title.slice(0, 200), html: textToHtml(text.replace(/\r\n?/g, '\n')),
+    created: modified || Date.now(), updated: modified || Date.now(),
+    folderName: 'Uvezeno',
+  };
+}
+
+async function importFiles(files) {
+  const found = [];          // notes from other apps
+  const backups = [];
+  let failed = 0;
+  const handleText = async (name, text, modified, readFile) => {
+    const trimmed = text.trim();
+    if (trimmed.startsWith('{')) {
+      let o = null;
+      try { o = JSON.parse(trimmed, backupReviver); } catch { /* not JSON, treat as text */ }
+      if (o?.app === 'biljeske') { backups.push(o); return; }
+      if (isKeepNote(o)) { const n = await fromKeep(o, readFile); if (n) found.push(n); return; }
+      if (o && /\.json$/i.test(name)) return;           // some other JSON file: skip
+    }
+    if (/\.json$/i.test(name) || /(^|\/)Labels\.txt$/i.test(name) || !trimmed) return;
+    found.push(fromText(name, text, modified));
+  };
+
+  toast('Čitam datoteke…');
+  for (const file of files) {
+    try {
+      if (/\.zip$/i.test(file.name) || /zip/.test(file.type)) {
+        const zip = await openZip(file);
+        const td8 = new TextDecoder();
+        for (const name of zip.names) {
+          if (!/\.(json|txt|md)$/i.test(name)) continue;
+          const dir = name.slice(0, name.lastIndexOf('/') + 1);
+          const readFile = async p => {
+            const match = zip.names.find(x => x === dir + p) || zip.names.find(x => x.endsWith('/' + p));
+            return match ? zip.read(match) : null;
+          };
+          await handleText(name, td8.decode(await zip.read(name)), null, readFile);
+        }
+      } else {
+        await handleText(file.name, await file.text(), file.lastModified, null);
+      }
+    } catch {
+      failed++;
+    }
+  }
+
+  for (const b of backups) await importBackupData(b);
+  if (found.length) await importForeign(found);
+  else if (!backups.length) toast(failed ? 'Datoteka se ne može pročitati' : 'U datotekama nema bilješki za uvoz');
+}
+
+async function importForeign(found) {
+  const byFolder = new Map();
+  for (const n of found) byFolder.set(n.folderName, (byFolder.get(n.folderName) || 0) + 1);
+  const ok = await confirmSheet({
+    title: `Uvesti ${notesCount(found.length)}?`,
+    text: 'Bilješke idu u mape: ' + [...byFolder].map(([f, c]) => `„${f}” (${c})`).join(', ') +
+          '. Kasnije ih možeš premjestiti kamo želiš.',
+    confirmLabel: 'Uvezi',
+  });
+  if (!ok) return;
+  const existing = new Map((await getAll('notes')).map(n => [n.id, n]));
+  const folderList = await getAll('folders');
+  const newFolders = [];
+  const folderFor = name => {
+    let f = [...folderList, ...newFolders].find(x => x.name.toLowerCase() === name.toLowerCase());
+    if (!f) {
+      f = { id: crypto.randomUUID(), name: name.slice(0, 40), color: COLORS[(folderList.length + newFolders.length + 2) % COLORS.length], created: Date.now() };
+      newFolders.push(f);
+    }
+    return f.id;
+  };
+  let added = 0;
+  const records = [];
+  for (const n of found) {
+    const cur = existing.get(n.id);
+    if (cur && cur.updated >= n.updated) continue;
+    const html = sanitize(n.html);
+    records.push({
+      id: n.id, title: n.title, html, body: htmlToText(html), images: countImages(html),
+      created: n.created, updated: n.updated, folderId: cur ? cur.folderId : folderFor(n.folderName),
+    });
+    added++;
+  }
+  await runTransaction(['notes', 'folders'], t => {
+    for (const f of newFolders) t.objectStore('folders').put(f);
+    for (const r of records) t.objectStore('notes').put(r);
+  });
+  setFilter('all');
+  await render();
+  toast(added ? `Uvezeno: ${notesCount(added)}` : 'Sve te bilješke već postoje');
+}
+
+// own backup file (already parsed)
+async function importBackupData(data) {
+  if (data.encrypted) {
+    const lock = data.lock;
+    if (!lock?.salt || !lock.check || !data.payload) { toast('Ova kopija je oštećena'); return; }
+    const key = await openPin({
+      title: 'Šifrirana kopija',
+      text: 'Upiši PIN koji je vrijedio kad je kopija napravljena.',
+      onPin: async pin => {
+        const k = await deriveKey(pin, lock.salt, lock.iterations || KDF_ITERATIONS);
+        try { await decryptJSON(k, lock.check); return { done: k }; } catch { return { error: 'Pogrešan PIN' }; }
+      },
+    });
+    if (!key) return;
+    try {
+      const buf = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: data.payload.iv }, key, data.payload.data);
+      data = JSON.parse(td.decode(buf), backupReviver);
+    } catch {
+      toast('Kopija se ne može dešifrirati');
+      return;
+    }
   }
   if (data?.app !== 'biljeske' || !Array.isArray(data.notes) || !Array.isArray(data.folders)) {
     toast('Ovo nije ispravna kopija bilješki');
@@ -905,7 +1684,7 @@ async function importBackup(file) {
   }
   const ok = await confirmSheet({
     title: 'Uvesti kopiju?',
-    text: `Kopija sadrži ${data.notes.length} bilješki i ${data.folders.length} mapa. Postojeće bilješke ostaju. ` +
+    text: `Kopija sadrži ${notesCount(data.notes.length)} i ${plural(data.folders.length, 'mapu', 'mape', 'mapa')}. Postojeće bilješke ostaju. ` +
           'Ako ista bilješka postoji na oba mjesta, zadržava se novija verzija.',
     confirmLabel: 'Uvezi',
   });
@@ -922,30 +1701,63 @@ async function importBackup(file) {
   const lockedUsable = !backupLock || sameLock || adoptLock;
 
   let added = 0, skipped = 0;
-  const t = db.transaction(['notes', 'folders', 'meta'], 'readwrite');
-  for (const f of data.folders) {
-    if (!f || typeof f.id !== 'string' || typeof f.name !== 'string' || localFolders.has(f.id)) continue;
-    t.objectStore('folders').put({ id: f.id, name: f.name.slice(0, 40), color: COLORS.includes(f.color) ? f.color : COLORS[5] });
-  }
-  for (const n of data.notes) {
-    if (!n || typeof n.id !== 'string' || typeof n.updated !== 'number') continue;
-    if (n.locked && (!n.enc || !lockedUsable)) { skipped++; continue; }
-    const cur = localNotes.get(n.id);
-    if (cur && cur.updated >= n.updated) continue;
-    const note = {
-      id: n.id, title: String(n.title || ''), folderId: typeof n.folderId === 'string' ? n.folderId : null,
-      updated: n.updated, images: Number(n.images) || 0,
-      body: n.locked ? '' : String(n.body || ''),
-      html: n.locked ? '' : sanitize(String(n.html ?? textToHtml(n.body || ''))),
-    };
-    if (n.locked) { note.locked = true; note.enc = n.enc; note.images = 0; }
-    t.objectStore('notes').put(note);
-    added++;
-  }
-  if (adoptLock) t.objectStore('meta').put(backupLock);
-  await new Promise((res, rej) => { t.oncomplete = res; t.onerror = () => rej(t.error); });
+  await runTransaction(['notes', 'folders', 'meta'], t => {
+    for (const f of data.folders) {
+      if (!f || typeof f.id !== 'string' || typeof f.name !== 'string' || localFolders.has(f.id)) continue;
+      const color = OLD_COLORS.includes(f.color) ? COLORS[OLD_COLORS.indexOf(f.color)]
+        : /^#[0-9a-f]{6}$/i.test(f.color) ? f.color : COLORS[5];
+      const folder = { id: f.id, name: f.name.slice(0, 40), color, created: Number(f.created) || 0 };
+      if (f.locked && lockedUsable) folder.locked = true;
+      t.objectStore('folders').put(folder);
+    }
+    for (const n of data.notes) {
+      if (!n || typeof n.id !== 'string' || typeof n.updated !== 'number') continue;
+      if (n.locked && (!n.enc || !lockedUsable)) { skipped++; continue; }
+      const cur = localNotes.get(n.id);
+      if (cur && cur.updated >= n.updated) continue;
+      const note = {
+        id: n.id, title: String(n.title || ''), folderId: typeof n.folderId === 'string' ? n.folderId : null,
+        updated: n.updated, created: Number(n.created) || n.updated, images: Number(n.images) || 0,
+        body: n.locked ? '' : String(n.body || ''),
+        html: n.locked ? '' : sanitize(String(n.html ?? textToHtml(n.body || ''))),
+      };
+      if (n.locked) { note.locked = true; note.enc = n.enc; note.images = 0; if (n.lockedByFolder) note.lockedByFolder = true; }
+      t.objectStore('notes').put(note);
+      added++;
+    }
+    if (adoptLock) t.objectStore('meta').put(backupLock);
+  });
   await render();
-  toast(`Uvezeno bilješki: ${added}` + (skipped ? ` · preskočeno zaključanih: ${skipped} (drugi PIN)` : ''));
+  toast(`Uvezeno: ${notesCount(added)}` + (skipped ? ` · preskočeno zaključanih: ${skipped} (drugi PIN)` : ''));
+}
+
+/* ---- Share target: "Dijeli → Bilješke" from another app creates a new note ---- */
+
+async function receiveShared() {
+  const p = new URLSearchParams(location.search);
+  if (!p.has('title') && !p.has('text') && !p.has('url')) return false;
+  history.replaceState({ depth: 0 }, '', location.pathname);     // clean address, a reload does not add it twice
+  let title = (p.get('title') || '').trim();
+  let text = (p.get('text') || '').replace(/\r\n?/g, '\n');
+  const url = p.get('url');
+  if (url && !text.includes(url)) text += (text ? '\n' : '') + url;
+  if (!title) {
+    // first short line becomes the title (Samsung Notes and Keep send title and text together)
+    const lines = text.split('\n');
+    if (lines.length > 1 && lines[0].trim().length <= 80) {
+      title = lines.shift().trim();
+      while (lines.length && !lines[0].trim()) lines.shift();
+      text = lines.join('\n');
+    }
+  }
+  if (!title && !text.trim()) return false;
+  const now = Date.now();
+  const note = { id: crypto.randomUUID(), title, html: textToHtml(text), body: text.trim(), images: 0, folderId: null, created: now, updated: now };
+  await put('notes', note);
+  await render();
+  openEditor(note, null);
+  toast('Bilješka je dodana');
+  return true;
 }
 
 /* ---------------- Editor ---------------- */
@@ -954,7 +1766,7 @@ async function openNote(n) {
   const fresh = await getOne('notes', n.id);
   if (!fresh) return render();
   if (!fresh.locked) return openEditor(fresh, null);
-  const key = await getLockKey(fresh.title || 'Zaključana bilješka', false);
+  const key = await keyFor(fresh, fresh.title || 'Zaključana bilješka');
   if (!key) return;
   const latest = await getOne('notes', n.id);     // re-read: a PIN migration may have re-encrypted it
   const data = await decryptJSON(key, latest.enc);
@@ -963,10 +1775,16 @@ async function openNote(n) {
 
 function openEditor(n, key) {
   homeScroll = window.scrollY;
+  const now = Date.now();
   current = n
     ? { ...n }
     : { id: crypto.randomUUID(), title: '', body: '', html: '', images: 0,
-        folderId: folderById(filter) ? filter : null, updated: Date.now() };
+        folderId: folderById(filter) ? filter : null, created: now, updated: now };
+  // a new note inside an opened locked folder is encrypted like the others there
+  if (!n && current.folderId && current.folderId === openFolderId && folderKey) {
+    key = folderKey;
+    current.lockedByFolder = true;
+  }
   currentKey = key || null;
   dirty = false;
   lastRange = null;
@@ -975,12 +1793,22 @@ function openEditor(n, key) {
   $('body').innerHTML = sanitize(noteHtml(current));
   $('saveState').textContent = '';
   $('lockBadge').hidden = !currentKey;
+  showDates();
   showTools(false);
 
   pushLayer(closeEditor);
   show('editor');
   window.scrollTo(0, 0);
   if (!n) $('title').focus();
+}
+
+// "Stvoreno 18. 11. · 14:32 · Uređeno 19. 11. · 09:10"
+function showDates() {
+  if (!current) return;
+  const c = createdOf(current);
+  const parts = ['Stvoreno ' + formatDate(c)];
+  if (current.updated - c > 60000) parts.push('Uređeno ' + formatDate(current.updated));
+  $('noteDates').textContent = parts.join('  ·  ');
 }
 
 async function closeEditor() {
@@ -1009,7 +1837,8 @@ async function saveCurrent() {
   const text = bodyEl.innerText.replace(/\u200B/g, '').trim();
   const images = bodyEl.querySelectorAll('img').length;
   const title = $('title').value.trim();
-  current = { ...current, title, html, body: text, images, updated: Date.now() };
+  // notes from v1.0 have no creation time: the last edit before this one is the best guess
+  current = { ...current, created: createdOf(current), title, html, body: text, images, updated: Date.now() };
   dirty = false;
   if (!title && !text && !images) {        // empty note is not kept
     await del('notes', current.id);
@@ -1023,6 +1852,16 @@ async function saveCurrent() {
   }
   await put('notes', record);
   $('saveState').textContent = 'Spremljeno';
+  showDates();
+}
+
+// "Spremi": save everything now and go back to the list
+async function saveAndClose() {
+  clearTimeout(saveTimer);
+  const empty = !$('title').value.trim() && !$('body').innerText.replace(/\u200B/g, '').trim() && !$('body').querySelector('img');
+  if (current) await saveCurrent();
+  await back();
+  if (!empty) toast('Spremljeno');
 }
 
 async function flushSave() {
@@ -1327,37 +2166,13 @@ async function insertImage(file) {
   markDirty();
 }
 
-/* ---------------- Folder editor ---------------- */
-
-function openFolderEd(f) {
-  curFolder = f ? { ...f } : { id: crypto.randomUUID(), name: '', color: COLORS[5] };
-  $('fTitle').textContent = f ? 'Uredi mapu' : 'Nova mapa';
-  $('fName').value = curFolder.name;
-  $('fDel').hidden = !f;
-  drawSwatches();
-  pushLayer(async () => { show('home'); await render(); });
-  show('folderEd');
-  if (!f) $('fName').focus();
-}
-
-function drawSwatches() {
-  const box = $('swatches');
-  box.innerHTML = '';
-  for (const c of COLORS) {
-    const b = el('button', 'sw' + (c === curFolder.color ? ' sel' : ''));
-    b.type = 'button';
-    b.style.background = c;
-    b.setAttribute('aria-label', 'Boja ' + c);
-    b.onclick = () => { curFolder.color = c; drawSwatches(); };
-    box.append(b);
-  }
-}
-
 /* ---------------- Events ---------------- */
 
 // home
 $('newBtn').onclick = () => openEditor();
-$('foldersBtn').onclick = () => openDrawer();
+$('menuBtn').onclick = () => openDrawer();
+$('allFoldersBtn').onclick = () => openAllFolders();
+$('folderMenuBtn').onclick = () => openFolderMenu();
 $('viewBtn').onclick = () => {
   viewMode = viewMode === 'grid' ? 'list' : 'grid';
   savePref('viewMode', viewMode);
@@ -1367,7 +2182,7 @@ $('searchBtn').onclick = () => {
   searchOpen = true;
   $('appbarMain').hidden = true;
   $('appbarSearch').hidden = false;
-  $('tabs').hidden = true;
+  $('tabsRow').hidden = true;
   $('search').focus();
   render();
   pushLayer(() => {
@@ -1376,7 +2191,8 @@ $('searchBtn').onclick = () => {
     $('search').value = '';
     $('appbarSearch').hidden = true;
     $('appbarMain').hidden = false;
-    $('tabs').hidden = false;
+    $('tabsRow').hidden = false;
+    animateList = true;
     render();
   });
 };
@@ -1395,6 +2211,8 @@ document.addEventListener('keydown', e => {
 
 // editor
 $('doneBtn').onclick = () => back();
+$('saveBtn').addEventListener('mousedown', e => e.preventDefault());   // keep the keyboard until the save is done
+$('saveBtn').onclick = () => saveAndClose();
 $('title').addEventListener('input', markDirty);
 $('title').addEventListener('keydown', e => {
   if (e.key === 'Enter') { e.preventDefault(); $('body').focus(); }
@@ -1451,15 +2269,24 @@ $('imgInput').addEventListener('change', async e => {
   if (file) await insertImage(file);
 });
 
-// save when the app goes to the background; close a locked note after a longer pause
-document.addEventListener('visibilitychange', () => {
+// save when the app goes to the background; after a longer pause close locked notes and locked folders
+document.addEventListener('visibilitychange', async () => {
   if (document.visibilityState === 'hidden') {
     hiddenAt = Date.now();
     flushSave();
-  } else if (view === 'editor' && currentKey && Date.now() - hiddenAt > LOCK_AFTER_MS) {
-    back();
+    return;
+  }
+  if (Date.now() - hiddenAt <= LOCK_AFTER_MS) return;
+  if (view === 'editor' && currentKey) await back();
+  if (openFolderId) {
+    while (layers.length) await back();      // close sheets etc. on top of the folder
+    openFolderId = null;
+    folderKey = null;
+    render();
   }
 });
+// last chance to save when the app is closed
+window.addEventListener('pagehide', () => flushSave());
 
 // move the toolbar and sheets above the on-screen keyboard (iOS)
 if (window.visualViewport) {
@@ -1472,34 +2299,10 @@ if (window.visualViewport) {
   vv.addEventListener('scroll', updateKb);
 }
 
-// folder editor
-$('fCancel').onclick = () => back();
-$('fSave').onclick = async () => {
-  curFolder.name = $('fName').value.trim();
-  if (!curFolder.name) { toast('Upiši ime mape'); $('fName').focus(); return; }
-  await put('folders', curFolder);
-  setFilter(curFolder.id);
-  await back();
-};
-$('fDel').onclick = async () => {
-  const ok = await confirmSheet({
-    title: 'Obrisati mapu?',
-    text: `Mapa „${curFolder.name}” se briše, a bilješke iz nje ostaju i prelaze u bilješke bez mape.`,
-    confirmLabel: 'Obriši mapu',
-    danger: true,
-  });
-  if (!ok) return;
-  for (const n of await getAll('notes'))
-    if (n.folderId === curFolder.id) { n.folderId = null; await put('notes', n); }
-  await del('folders', curFolder.id);
-  setFilter('home');
-  await back();
-};
-
 $('importInput').addEventListener('change', async e => {
-  const file = e.target.files[0];
+  const files = [...e.target.files];
   e.target.value = '';
-  if (file) await importBackup(file);
+  if (files.length) await importFiles(files);
 });
 
 /* App updates: a new service worker takes over in the background.
@@ -1518,15 +2321,27 @@ document.addEventListener('visibilitychange', () => {
 
 /* ---------------- Start ---------------- */
 
+// v1.0 folders: brighter colors, and a creation time so new folders are sorted sensibly
+async function migrateFolders() {
+  for (const f of await getAll('folders')) {
+    const i = OLD_COLORS.indexOf(f.color);
+    if (i < 0 && f.created != null) continue;
+    await put('folders', { ...f, color: i >= 0 ? COLORS[i] : f.color, created: f.created ?? 0 });
+  }
+}
+
 (async () => {
   for (const e of document.querySelectorAll('[data-icon]')) e.innerHTML = icon(e.dataset.icon);
   buildPinPad();
+  applySettings();
   db = await openDB();
   // ask the browser not to auto-delete our data when storage is low
   navigator.storage?.persist?.().catch(() => {});
+  await migrateFolders();
   history.replaceState({ depth: 0 }, '');
   show('home');
   await render();
+  await receiveShared();
   try {
     if (sessionStorage.getItem('justUpdated')) {
       sessionStorage.removeItem('justUpdated');
