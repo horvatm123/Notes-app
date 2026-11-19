@@ -2,13 +2,15 @@
 
 const $ = id => document.getElementById(id);
 // folder colors (bright); OLD_COLORS are the softer ones from v1.0, converted on start
-const COLORS = ['#ff2d3d', '#ff7a00', '#ffc400', '#00c853', '#00b8d4', '#2f6bff', '#9b3dff', '#ff2d8a'];
+// v1.4.0: brown added at the end (the order of the first 8 must stay, OLD_COLORS map to them by position)
+const COLORS = ['#ff2d3d', '#ff7a00', '#ffc400', '#00c853', '#00b8d4', '#2f6bff', '#9b3dff', '#ff2d8a', '#a0622d'];
 const OLD_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
 const ACCENTS = [['blue', '#2f6bff', 'Plava'], ['purple', '#8a3dff', 'Ljubičasta'], ['pink', '#f0287a', 'Ružičasta'],
-  ['red', '#ee2b3b', 'Crvena'], ['orange', '#ff6a00', 'Narančasta'], ['green', '#00a651', 'Zelena'], ['teal', '#009d9a', 'Tirkizna']];
+  ['red', '#ee2b3b', 'Crvena'], ['orange', '#ff6a00', 'Narančasta'], ['green', '#00a651', 'Zelena'], ['teal', '#009d9a', 'Tirkizna'],
+  ['brown', '#a0622d', 'Smeđa']];
 const DEFAULT_SETTINGS = { theme: 'system', accent: 'blue', font: 'dm', size: 'l' };
 // formatting options; names map to CSS variables (--t-*, --h-*) so dark mode can adjust them
-const TEXT_COLORS = [['red', 'Crvena'], ['blue', 'Plava'], ['green', 'Zelena'], ['yellow', 'Žuta'], ['orange', 'Narančasta'], ['purple', 'Ljubičasta']];
+const TEXT_COLORS = [['red', 'Crvena'], ['blue', 'Plava'], ['green', 'Zelena'], ['yellow', 'Žuta'], ['orange', 'Narančasta'], ['purple', 'Ljubičasta'], ['pink', 'Ružičasta']];
 const HL_COLORS = TEXT_COLORS;
 const UL_COLORS = [['fg', 'Obična'], ...TEXT_COLORS];
 const SIZES = [['s', 'Mala', '.85em'], ['', 'Normalna', '1em'], ['l', 'Velika', '1.25em'], ['xl', 'Najveća', '1.55em']];
@@ -19,7 +21,7 @@ const STYLE_VALUES = {
   'data-u': new Set(UL_COLORS.map(c => c[0])),
   'data-fs': new Set(['s', 'l', 'xl']),
 };
-const APP_VERSION = '1.3.0';
+const APP_VERSION = '1.4.0';
 const MAX_IMG = 1280;          // longest image side in px after resizing
 const SAVE_DELAY = 500;        // ms of inactivity before autosave
 const KDF_ITERATIONS = 600000; // PBKDF2 rounds: makes PIN guessing slow
@@ -172,12 +174,13 @@ function el(tag, cls, text) {
 }
 
 function show(v) {
-  const changed = view !== v;
+  const prev = view;
   view = v;
   for (const id of ['home', 'editor']) {
     const e = $(id);
     e.hidden = id !== v;
-    if (id === v && changed) restartAnimation(e, 'enter');
+    // coming back from the editor, the list slides in from the left (like going back)
+    if (id === v && prev !== v) restartAnimation(e, v === 'home' && prev === 'editor' ? 'enter-back' : 'enter');
   }
 }
 
@@ -326,6 +329,7 @@ function showSheet(build, onClose = null) {
   if (sheetOpen) restartAnimation(sh, 'swap');   // content changes inside an open sheet: fade it in
   if (!sheetOpen) {
     sheetOpen = true;
+    $('toast').classList.remove('show');         // a toast would cover the sheet
     sh.classList.add('open');
     updateScrim();
     pushLayer(() => {
@@ -468,7 +472,7 @@ function drawPinDots() {
 }
 
 function restartAnimation(e, cls) {
-  e.classList.remove('shake', 'swap', 'enter');
+  e.classList.remove('shake', 'swap', 'enter', 'enter-back');
   void e.offsetWidth;          // forces the browser to restart the animation
   e.classList.add(cls);
 }
@@ -715,6 +719,9 @@ function renderTabs() {
   all.textContent = 'Sve';
   box.scrollLeft = scroll;
   const active = box.querySelector('.active');
+  // a newly chosen tab gets a small "pop" (not on every re-render)
+  if (active && renderTabs.last !== filter) active.classList.add('pop');
+  renderTabs.last = filter;
   if (active) {
     // scroll the active tab into view inside the row only (not the whole page)
     const l = active.offsetLeft - 10, r = active.offsetLeft + active.offsetWidth + 34 - box.clientWidth;
@@ -2361,6 +2368,7 @@ $('selMenu').onclick = () => openSelectionMenu();
 $('viewBtn').onclick = () => {
   viewMode = viewMode === 'grid' ? 'list' : 'grid';
   savePref('viewMode', viewMode);
+  animateList = true;          // cards come in again in the new layout
   render();
 };
 $('searchBtn').onclick = () => {
