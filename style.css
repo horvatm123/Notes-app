@@ -214,7 +214,29 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* ---------- Notes: shared ---------- */
 .list { padding: 6px var(--pad-r) 120px var(--pad-l); }
-.note { position: relative; cursor: pointer; transition: transform .15s var(--ease), opacity .2s; }
+.note {
+  position: relative; cursor: pointer;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;   /* long press selects the note, not text */
+  transition: transform .15s var(--ease), opacity .2s, box-shadow .2s;
+}
+/* selection mode (long press) */
+.sel-check {
+  display: none;
+  position: absolute; top: 12px; right: 12px; z-index: 1;
+  width: 26px; height: 26px; border-radius: 50%;
+  border: 2px solid var(--muted); background: var(--card);
+  place-items: center; color: #fff;
+  transition: background-color .2s, border-color .2s;
+}
+.sel-check svg { width: 16px; height: 16px; stroke-width: 3; opacity: 0; transition: opacity .15s; }
+.selecting .sel-check { display: grid; animation: pop-in .2s var(--ease); }
+.selecting .more { display: none; }
+.note.sel .sel-check { background: var(--accent); border-color: var(--accent); }
+.note.sel .sel-check svg { opacity: 1; }
+.mode-list .note.sel { box-shadow: 0 0 0 2.5px var(--accent); }
+.mode-grid .note.sel .thumb { box-shadow: 0 0 0 2.5px var(--accent); }
+#selCount { font-family: var(--font-ui); font-size: 1.25rem; font-weight: 600; }
+.sel-all { flex: none; background: transparent; color: var(--accent); font-weight: 600; padding: 8px 10px; }
 .note:active { transform: scale(.98); }
 .note.anim { animation: rise-in .35s var(--ease) both; animation-delay: calc(var(--i, 0) * 28ms); }
 .note.leaving { opacity: 0; transform: scale(.94); transition: opacity .2s, transform .2s var(--ease); }

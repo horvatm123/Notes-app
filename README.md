@@ -1,6 +1,6 @@
 # Bilješke (Notes-app)
 
-Private notes app for personal, day-to-day use. Version **1.2.1**.
+Private notes app for personal, day-to-day use. Version **1.3.0**.
 
 Live: https://horvatm123.github.io/Notes-app/
 
@@ -15,6 +15,8 @@ It is an installable web app (PWA). All notes are stored only on the device, in 
 - **Search** ignores diacritics and forgives typos (`promijena` finds `promjena`)
 - **Folders** with bright colors; ⋮ inside a folder: edit name/color, lock with the PIN, export the folder, delete (also from ☰ → pencil). A locked folder needs the PIN to open, its notes are encrypted and hidden from *Sve* and search
 - **Editor:** blue back and *Spremi* (save and close) buttons, formatting tools behind the pencil button, autosave
+- **Select notes:** long press on a note starts the selection (tap to add more, *Odaberi sve*); ⋮ deletes, moves, exports or locks all selected notes
+- **Deleting a folder** deletes the notes in it too (after a confirmation; a locked folder needs the PIN)
 - **Note menu (⋮):** move to a folder or a new folder, share, copy text, lock / unlock, delete
 - **Cards** show the date and time the note was created; the last edited note is on top
 - **Settings (☰ → Postavke):** theme (system/light/dark), accent color, font (DM Sans, Source Serif 4, system), text size

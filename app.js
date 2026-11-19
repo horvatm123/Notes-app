@@ -19,7 +19,7 @@ const STYLE_VALUES = {
   'data-u': new Set(UL_COLORS.map(c => c[0])),
   'data-fs': new Set(['s', 'l', 'xl']),
 };
-const APP_VERSION = '1.2.1';
+const APP_VERSION = '1.3.0';
 const MAX_IMG = 1280;          // longest image side in px after resizing
 const SAVE_DELAY = 500;        // ms of inactivity before autosave
 const KDF_ITERATIONS = 600000; // PBKDF2 rounds: makes PIN guessing slow
@@ -741,8 +741,10 @@ async function render() {
     notes.sort((a, b) => b.updated - a.updated);   // last edited on top
   }
 
+  visibleNotes = notes;
   const list = $('list');
-  list.className = 'list mode-' + viewMode;
+  list.className = 'list mode-' + viewMode + (selecting ? ' selecting' : '');
+  if (selecting) updateSelectionUI();
   list.replaceChildren();
   const anim = animateList;
   animateList = false;
@@ -797,7 +799,11 @@ function noteCard(n) {
     card.classList.add('in-folder');
     card.style.setProperty('--fc', f.color);
   }
-  card.onclick = () => openNote(n);
+  if (selected.has(n.id)) card.classList.add('sel');
+  const check = el('span', 'sel-check');
+  check.innerHTML = icon('check');
+  card.append(check);
+  card.onclick = () => (selecting ? toggleSelected(n.id) : openNote(n));
   return [card, f];
 }
 
@@ -829,6 +835,142 @@ function gridCard(n, showFolder) {
   }
   card.append(th, el('div', 'name', n.title || 'Bez naslova'), metaLine(n, f, showFolder, true), moreButton(n));
   return card;
+}
+
+/* ---------------- Selecting notes (long press) ----------------
+   Long press on a card starts the selection; taps then add or remove notes.
+   ⋮ offers delete, move, export and lock for all selected notes. */
+
+let selecting = false;
+const selected = new Set();
+let visibleNotes = [];           // notes currently on the screen, for "Odaberi sve"
+
+function enterSelection(id) {
+  if (selecting) { toggleSelected(id); return; }
+  selecting = true;
+  selected.clear();
+  selected.add(id);
+  navigator.vibrate?.(12);         // short buzz, like other apps
+  updateSelectionUI();
+  pushLayer(() => {                // back gesture or ✕ ends the selection
+    selecting = false;
+    selected.clear();
+    updateSelectionUI();
+  });
+}
+
+function toggleSelected(id) {
+  if (selected.has(id)) selected.delete(id); else selected.add(id);
+  updateSelectionUI();
+}
+
+const exitSelection = () => (selecting ? back() : Promise.resolve());
+
+function updateSelectionUI() {
+  $('appbarSelect').hidden = !selecting;
+  $('appbarMain').hidden = selecting || searchOpen;
+  $('appbarSearch').hidden = selecting || !searchOpen;
+  $('tabsRow').hidden = selecting || searchOpen;
+  $('newBtn').hidden = selecting;
+  $('list').classList.toggle('selecting', selecting);
+  for (const c of $('list').querySelectorAll('.note')) c.classList.toggle('sel', selected.has(c.dataset.id));
+  $('selCount').textContent = 'Odabrano: ' + selected.size;
+  const all = visibleNotes.length > 0 && visibleNotes.every(n => selected.has(n.id));
+  $('selAll').textContent = all ? 'Poništi sve' : 'Odaberi sve';
+}
+
+function selectAll() {
+  const all = visibleNotes.every(n => selected.has(n.id));
+  for (const n of visibleNotes) if (all) selected.delete(n.id); else selected.add(n.id);
+  updateSelectionUI();
+}
+
+async function openSelectionMenu() {
+  if (!selected.size) { toast('Najprije odaberi bilješke'); return; }
+  const list = (await Promise.all([...selected].map(id => getOne('notes', id)))).filter(Boolean);
+  showSheet(sh => {
+    sh.append(sheetTitle('Odabrano: ' + notesCount(list.length)));
+    const items = [
+      { icon: 'folder', label: 'Premjesti u mapu', onClick: () => openMoveSheet(list, exitSelection) },
+      { icon: 'download', label: 'Izvezi', onClick: () => openExportSheet({ ids: new Set(list.map(n => n.id)), done: exitSelection }) },
+    ];
+    if (list.some(n => !n.locked)) items.push({ icon: 'lock', label: 'Zaključaj', onClick: () => lockNotes(list) });
+    items.push({ icon: 'trash', label: 'Obriši', danger: true, onClick: () => deleteNotes(list) });
+    sh.append(menuList(items));
+  });
+}
+
+async function lockNotes(list) {
+  await closeSheet();
+  const key = await getLockKey('Zaključaj bilješke', true);
+  if (!key) return;
+  const records = [];
+  for (const n of list) {
+    const fresh = await getOne('notes', n.id);
+    if (!fresh || fresh.locked) continue;      // already locked ones stay as they are
+    const enc = await encryptJSON(key, { html: noteHtml(fresh), body: fresh.body || '' });
+    records.push({ ...fresh, html: '', body: '', images: 0, locked: true, enc });
+  }
+  await runTransaction(['notes'], t => { for (const r of records) t.objectStore('notes').put(r); });
+  await exitSelection();
+  toast('Zaključano: ' + notesCount(records.length));
+  render();
+}
+
+async function deleteNotes(list) {
+  const ok = await confirmSheet({
+    title: `Obrisati ${notesCount(list.length)}?`,
+    text: list.length === 1 ? 'Odabrana bilješka bit će trajno obrisana.' : 'Odabrane bilješke bit će trajno obrisane.',
+    confirmLabel: 'Obriši',
+    danger: true,
+  });
+  if (!ok) return;
+  await runTransaction(['notes'], t => { for (const n of list) t.objectStore('notes').delete(n.id); });
+  for (const c of $('list').querySelectorAll('.note.sel')) c.classList.add('leaving');
+  await new Promise(r => setTimeout(r, 200));
+  await exitSelection();
+  toast('Obrisano: ' + notesCount(list.length));
+  render();
+}
+
+// long press detection on the cards
+let pressTimer = null;
+let pressStart = null;
+let pressFired = false;
+const LONG_PRESS_MS = 480;
+{
+  const list = $('list');
+  list.addEventListener('pointerdown', e => {
+    const card = e.target.closest('.note');
+    pressFired = false;
+    if (!card || e.target.closest('.more')) return;
+    pressStart = { x: e.clientX, y: e.clientY };
+    clearTimeout(pressTimer);
+    pressTimer = setTimeout(() => { pressFired = true; enterSelection(card.dataset.id); }, LONG_PRESS_MS);
+  });
+  list.addEventListener('pointermove', e => {
+    // finger moved (scrolling): not a long press
+    if (pressStart && Math.hypot(e.clientX - pressStart.x, e.clientY - pressStart.y) > 10) clearTimeout(pressTimer);
+  });
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) list.addEventListener(ev, () => clearTimeout(pressTimer));
+  window.addEventListener('scroll', () => clearTimeout(pressTimer), { passive: true });
+  // on phones the system may report the long press as "contextmenu" (sometimes before our timer)
+  list.addEventListener('contextmenu', e => {
+    const card = e.target.closest('.note');
+    if (!card) return;
+    e.preventDefault();
+    if (pressFired || e.target.closest('.more')) return;
+    clearTimeout(pressTimer);
+    pressFired = true;
+    enterSelection(card.dataset.id);
+  });
+  // the tap that ends a long press must not open the note
+  list.addEventListener('click', e => {
+    if (!pressFired) return;
+    pressFired = false;
+    e.stopPropagation();
+    e.preventDefault();
+  }, true);
 }
 
 /* ---------------- Search that forgives typos ----------------
@@ -947,7 +1089,7 @@ async function openDrawer() {
   set.append(pickBtn('settings', 'Postavke', null, closeThen(openSettings)));
   const last = Number(loadPref('lastBackup', 0));
   const exp = row(false);
-  exp.append(pickBtn('download', 'Izvezi kopiju', null, closeThen(openExportSheet)));
+  exp.append(pickBtn('download', 'Izvezi kopiju', null, closeThen(() => openExportSheet())));
   exp.querySelector('.pick').append(el('span', 'count', last ? formatDay(last) : 'nikad'));
   const imp = row(false);
   imp.append(pickBtn('upload', 'Uvezi', null, closeThen(openImportSheet)));
@@ -1126,7 +1268,7 @@ function openFolderMenu() {
       f.locked
         ? { icon: 'unlock', label: 'Otključaj mapu', onClick: () => unlockFolder(f) }
         : { icon: 'lock', label: 'Zaključaj mapu', onClick: () => lockFolder(f) },
-      { icon: 'download', label: 'Izvezi mapu', onClick: () => openExportSheet(f) },
+      { icon: 'download', label: 'Izvezi mapu', onClick: () => openExportSheet({ folder: f }) },
       { icon: 'trash', label: 'Obriši mapu', danger: true, onClick: () => deleteFolder(f) },
     ]));
   });
@@ -1189,26 +1331,27 @@ async function unlockFolder(f) {
   render();
 }
 
+// deletes the folder together with all its notes
 async function deleteFolder(f) {
+  const count = (await getAll('notes')).filter(n => n.folderId === f.id).length;
   const ok = await confirmSheet({
     title: 'Obrisati mapu?',
-    text: `Mapa „${f.name}” se briše, a bilješke iz nje ostaju i prelaze u bilješke bez mape.` +
-          (f.locked ? ' Bilješke iz zaključane mape ostaju zaključane PIN-om.' : ''),
-    confirmLabel: 'Obriši mapu',
+    text: count
+      ? `Mapa „${f.name}” i ${notesCount(count)} u njoj bit će trajno obrisane. To se ne može vratiti.`
+      : `Mapa „${f.name}” je prazna i bit će obrisana.`,
+    confirmLabel: count ? `Obriši mapu i ${notesCount(count)}` : 'Obriši mapu',
     danger: true,
   });
   if (!ok) return;
+  // a locked folder can only be deleted with the PIN (unless it is open right now)
+  if (f.locked && count && openFolderId !== f.id && !(await getLockKey(`Obriši mapu „${f.name}”`, false))) return;
   const notes = (await getAll('notes')).filter(n => n.folderId === f.id);
   await runTransaction(['notes', 'folders'], t => {
-    for (const n of notes) {
-      const m = { ...n, folderId: null };
-      delete m.lockedByFolder;            // stays locked as a normal locked note
-      t.objectStore('notes').put(m);
-    }
+    for (const n of notes) t.objectStore('notes').delete(n.id);
     t.objectStore('folders').delete(f.id);
   });
   setFilter('home');
-  toast('Mapa je obrisana');
+  toast(count ? `Obrisano: mapa i ${notesCount(count)}` : 'Mapa je obrisana');
   render();
 }
 
@@ -1225,7 +1368,7 @@ function openNoteMenu(n) {
   showSheet(sh => {
     sh.append(sheetTitle(n.title || 'Bez naslova'));
     const items = [
-      { icon: 'folder', label: 'Premjesti u mapu', onClick: () => openMoveSheet(n) },
+      { icon: 'folder', label: 'Premjesti u mapu', onClick: () => openMoveSheet([n]) },
     ];
     if (navigator.share) items.push({ icon: 'share', label: 'Podijeli', onClick: () => shareNote(n) });
     items.push({ icon: 'copy', label: 'Kopiraj tekst', onClick: () => copyNote(n) });
@@ -1236,40 +1379,53 @@ function openNoteMenu(n) {
   });
 }
 
-function openMoveSheet(n) {
+// list: one or more notes (from the ⋮ menu or the selection mode)
+function openMoveSheet(list, done) {
+  const one = list.length === 1 ? list[0] : null;
   showSheet(sh => {
-    sh.append(sheetTitle('Premjesti u mapu'));
-    const items = [{ icon: 'notes', label: 'Bez mape', checked: !n.folderId, onClick: () => moveNote(n, null) }];
+    sh.append(sheetTitle(one ? 'Premjesti u mapu' : `Premjesti ${notesCount(list.length)}`));
+    const go = f => moveNotes(list, f, done);
+    const items = [{ icon: 'notes', label: 'Bez mape', checked: one && !one.folderId, onClick: () => go(null) }];
     for (const f of folders)
-      items.push({ dot: f.color, label: f.name, sub: f.locked ? 'zaključana' : '', checked: n.folderId === f.id, onClick: () => moveNote(n, f) });
+      items.push({ dot: f.color, label: f.name, sub: f.locked ? 'zaključana' : '', checked: one && one.folderId === f.id, onClick: () => go(f) });
     items.push({
       icon: 'plus', label: 'Premjesti u novu mapu…', accent: true,
-      onClick: async () => { const f = await folderSheet(); if (f) await moveNote(n, f); },
+      onClick: async () => { const f = await folderSheet(); if (f) await go(f); },
     });
     sh.append(menuList(items));
   });
 }
 
-async function moveNote(n, f) {
+async function moveNotes(list, f, done) {
   await closeSheet();
-  const fresh = await getOne('notes', n.id);
-  if (!fresh) return;
-  let patch = { folderId: f ? f.id : null };
-  if (f?.locked && !fresh.locked) {
-    // a note moved into a locked folder is encrypted as well
-    const key = await keyFor({ folderId: f.id }, 'Premjesti u zaključanu mapu');
+  const fresh = (await Promise.all(list.map(n => getOne('notes', n.id)))).filter(Boolean);
+  if (!fresh.length) return;
+  // notes going into a locked folder are encrypted; notes locked only by their folder are unlocked when they leave it
+  const toLock = fresh.filter(n => f?.locked && !n.locked);
+  const toUnlock = fresh.filter(n => n.lockedByFolder && !f?.locked);
+  let key = null;
+  if (toLock.length || toUnlock.length) {
+    key = await keyFor({ folderId: toLock.length ? f.id : toUnlock[0].folderId },
+      toLock.length ? 'Premjesti u zaključanu mapu' : 'Premjesti iz zaključane mape');
     if (!key) return;
-    const enc = await encryptJSON(key, { html: noteHtml(fresh), body: fresh.body || '' });
-    patch = { ...patch, html: '', body: '', images: 0, locked: true, lockedByFolder: true, enc };
-  } else if (fresh.lockedByFolder && !f?.locked) {
-    // it was locked only because of its folder, so leaving the folder unlocks it
-    const key = await keyFor(fresh, 'Premjesti iz zaključane mape');
-    if (!key) return;
-    const data = await decryptJSON(key, fresh.enc);
-    patch = { ...patch, html: data.html, body: data.body, images: countImages(data.html), locked: undefined, enc: undefined, lockedByFolder: undefined };
   }
-  await updateNote(n.id, patch);
-  toast(f ? `Premješteno u „${f.name}”` : 'Uklonjeno iz mape');
+  const records = [];
+  for (const n of fresh) {
+    let r = { ...n, folderId: f ? f.id : null };
+    if (toLock.includes(n)) {
+      const enc = await encryptJSON(key, { html: noteHtml(n), body: n.body || '' });
+      r = { ...r, html: '', body: '', images: 0, locked: true, lockedByFolder: true, enc };
+    } else if (toUnlock.includes(n)) {
+      const data = await decryptJSON(key, n.enc);
+      r = { ...r, html: data.html, body: data.body, images: countImages(data.html) };
+      delete r.locked; delete r.enc; delete r.lockedByFolder;
+    }
+    records.push(r);
+  }
+  await runTransaction(['notes'], t => { for (const r of records) t.objectStore('notes').put(r); });
+  await done?.();
+  toast(records.length > 1 ? `Premješteno: ${notesCount(records.length)}`
+    : f ? `Premješteno u „${f.name}”` : 'Uklonjeno iz mape');
   render();
 }
 
@@ -1378,14 +1534,16 @@ const backupReviver = (k, v) =>
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-// folder: export only that folder; without it everything is exported
-function openExportSheet(folder) {
+// scope: nothing = everything, { folder } = one folder, { ids } = selected notes
+function openExportSheet(scope = {}) {
   let encrypt = loadPref('encryptBackup', '1') === '1';
+  const { folder, ids } = scope;
   showSheet(sh => {
     const box = el('div', 'pw-form');
-    box.append(el('h3', null, folder ? `Izvezi mapu „${folder.name}”` : 'Izvezi kopiju'),
+    box.append(el('h3', null, folder ? `Izvezi mapu „${folder.name}”` : ids ? `Izvezi ${notesCount(ids.size)}` : 'Izvezi kopiju'),
       el('p', null, folder
         ? 'Datoteka sadrži sve bilješke iz ove mape. Uvoz (☰ → Uvezi) ih vraća u istu mapu.'
+        : ids ? 'Datoteka sadrži odabrane bilješke. Uvoz (☰ → Uvezi) ih vraća u iste mape.'
         : 'Kopija sadrži sve bilješke i mape. Spremi je na Google Drive pa je imaš i ako izgubiš ili promijeniš mobitel.'));
     const tr = el('div', 'toggle-row');
     const txt = el('div', 'txt', 'Šifriraj PIN-om');
@@ -1405,20 +1563,23 @@ function openExportSheet(folder) {
     sh.append(box);
     const items = [];
     if (navigator.canShare)
-      items.push({ icon: 'cloud', label: 'Spremi u Google Drive…', sub: 'ili drugdje', onClick: () => exportBackup('share', encrypt, folder) });
-    items.push({ icon: 'phone', label: 'Spremi na uređaj', sub: 'Preuzimanja', onClick: () => exportBackup('download', encrypt, folder) });
+      items.push({ icon: 'cloud', label: 'Spremi u Google Drive…', sub: 'ili drugdje', onClick: () => exportBackup('share', encrypt, scope) });
+    items.push({ icon: 'phone', label: 'Spremi na uređaj', sub: 'Preuzimanja', onClick: () => exportBackup('download', encrypt, scope) });
     sh.append(menuList(items));
   });
 }
 
-async function buildBackup(encrypt, folder) {
+async function buildBackup(encrypt, scope = {}) {
   const data = {
     app: 'biljeske', format: 1, version: APP_VERSION, exported: Date.now(),
     notes: await getAll('notes'), folders: await getAll('folders'), meta: await getAll('meta'),
   };
-  if (folder) {                 // the PIN check (meta) stays, locked notes need it
-    data.notes = data.notes.filter(n => n.folderId === folder.id);
-    data.folders = data.folders.filter(f => f.id === folder.id);
+  // only part of the notes: keep their folders, and the PIN check (meta) that locked notes need
+  if (scope.folder) data.notes = data.notes.filter(n => n.folderId === scope.folder.id);
+  if (scope.ids) data.notes = data.notes.filter(n => scope.ids.has(n.id));
+  if (scope.folder || scope.ids) {
+    const used = new Set(data.notes.map(n => n.folderId));
+    data.folders = data.folders.filter(f => used.has(f.id) || f.id === scope.folder?.id);
   }
   let json = JSON.stringify(data, backupReplacer);
   if (encrypt) {
@@ -1446,13 +1607,17 @@ function downloadFile(file) {
   setTimeout(() => URL.revokeObjectURL(a.href), 30000);
 }
 
-async function exportBackup(how, encrypt, folder) {
+async function exportBackup(how, encrypt, scope = {}) {
   savePref('encryptBackup', encrypt ? '1' : '0');
   await closeSheet();
-  const json = await buildBackup(encrypt, folder);
+  const json = await buildBackup(encrypt, scope);
+  scope.done?.();                 // e.g. leave the selection mode
   if (!json) return;
-  // file name: biljeske-kopija-2026-11-19 or biljeske-mapa-posao-2026-11-19
-  const slug = folder ? 'mapa-' + (norm(folder.name).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'mapa') : 'kopija';
+  const full = !scope.folder && !scope.ids;
+  // file name: biljeske-kopija-…, biljeske-mapa-posao-…, biljeske-odabrano-…
+  const slug = scope.folder ? 'mapa-' + (norm(scope.folder.name).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'mapa')
+    : scope.ids ? 'odabrano' : 'kopija';
+  const what = scope.folder ? 'Mapa je' : scope.ids ? 'Bilješke su' : 'Kopija je';
   const base = `biljeske-${slug}-${today()}${encrypt ? '-sifrirano' : ''}`;
   const file = new File([json], base + '.json', { type: 'application/json' });
   if (how === 'share') {
@@ -1461,17 +1626,17 @@ async function exportBackup(how, encrypt, folder) {
     try {
       if (!navigator.canShare({ files: [shareFile] })) throw new Error('files');
       await navigator.share({ files: [shareFile], title: shareFile.name });
-      if (!folder) savePref('lastBackup', String(Date.now()));
-      toast(folder ? 'Mapa je poslana' : 'Kopija je poslana');
+      if (full) savePref('lastBackup', String(Date.now()));
+      toast(what + ' poslan' + (scope.folder ? 'a' : scope.ids ? 'e' : 'a'));
       return;
     } catch (e) {
       if (e.name === 'AbortError') return;
-      toast('Dijeljenje ne radi ovdje, kopija ide u Preuzimanja');
+      toast('Dijeljenje ne radi ovdje, datoteka ide u Preuzimanja');
     }
   }
   downloadFile(file);
-  if (!folder) savePref('lastBackup', String(Date.now()));
-  if (how !== 'share') toast((folder ? 'Mapa je spremljena' : 'Kopija je spremljena') + ' u Preuzimanja');
+  if (full) savePref('lastBackup', String(Date.now()));
+  if (how !== 'share') toast(what + (scope.ids ? ' spremljene' : ' spremljena') + ' u Preuzimanja');
 }
 
 /* ---- Import: own backups, Google Keep (Takeout .zip / .json), text files ---- */
@@ -2190,6 +2355,9 @@ $('newBtn').onclick = () => openEditor();
 $('menuBtn').onclick = () => openDrawer();
 $('allFoldersBtn').onclick = () => openAllFolders();
 $('folderMenuBtn').onclick = () => openFolderMenu();
+$('selClose').onclick = () => back();
+$('selAll').onclick = () => selectAll();
+$('selMenu').onclick = () => openSelectionMenu();
 $('viewBtn').onclick = () => {
   viewMode = viewMode === 'grid' ? 'list' : 'grid';
   savePref('viewMode', viewMode);
@@ -2223,7 +2391,7 @@ document.addEventListener('keydown', e => {
     else if (e.key === 'Escape') { e.preventDefault(); back(); }
     return;
   }
-  if (e.key === 'Escape' && (sheetOpen || drawerOpen)) { e.preventDefault(); back(); }
+  if (e.key === 'Escape' && (sheetOpen || drawerOpen || selecting)) { e.preventDefault(); back(); }
 });
 
 // editor
