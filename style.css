@@ -606,6 +606,13 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .pw-form.confirm { padding-top: 4px; }
 .pw-form.confirm p { margin-bottom: 18px; }
 button.danger-fill { background: var(--danger); color: #fff; }
+.wide-btn {
+  width: 100%; margin-top: 10px; padding: 13px;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  font-weight: 600;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--danger) 30%, transparent);
+}
+.wide-btn svg { width: 19px; height: 19px; }
 .drawer-sub { margin: 22px 12px 4px; font-size: .78rem; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 .drawer .version { margin: 20px 12px 0; color: var(--muted); font-size: .8rem; }
 

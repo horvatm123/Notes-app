@@ -19,7 +19,7 @@ const STYLE_VALUES = {
   'data-u': new Set(UL_COLORS.map(c => c[0])),
   'data-fs': new Set(['s', 'l', 'xl']),
 };
-const APP_VERSION = '1.2.0';
+const APP_VERSION = '1.2.1';
 const MAX_IMG = 1280;          // longest image side in px after resizing
 const SAVE_DELAY = 500;        // ms of inactivity before autosave
 const KDF_ITERATIONS = 600000; // PBKDF2 rounds: makes PIN guessing slow
@@ -56,7 +56,8 @@ const ICONS = {
   highlight: '<path d="M14.5 4.5l5 5-8 8H7v-4.5z"/><path d="M12 7l5 5"/>',
   home: '<path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h11V9.5"/><path d="M10 20v-5h4v5"/>',
   folders: '<path d="M3 8.5a2 2 0 0 1 2-2h3.5l1.8 1.8H16a2 2 0 0 1 2 2V16a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M6.5 4.5h3l1.5 1.5h7a2.5 2.5 0 0 1 2.5 2.5v6"/>',
-  settings: '<circle cx="12" cy="12" r="3"/><path d="M10.3 3.2h3.4l.5 2.4 1.7.9 2.2-1 2.4 2.4-1 2.2.9 1.7 2.4.5v3.4l-2.4.5-.9 1.7 1 2.2-2.4 2.4-2.2-1-1.7.9-.5 2.4h-3.4l-.5-2.4-1.7-.9-2.2 1-2.4-2.4 1-2.2-.9-1.7-2.4-.5v-3.4l2.4-.5.9-1.7-1-2.2 2.4-2.4 2.2 1 1.7-.9z"/>',
+  // gear (same shape as the Lucide "settings" icon)
+  settings: '<path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>',
   cloud: '<path d="M7 18.5h10.5a4 4 0 0 0 .4-8 6 6 0 0 0-11.5 1.6A3.3 3.3 0 0 0 7 18.5z"/>',
   apps: '<rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><path d="M16.5 13.5v6M13.5 16.5h6"/>',
   phone: '<rect x="6.5" y="3" width="11" height="18" rx="2.5"/><path d="M10.5 18h3"/>',
@@ -1056,7 +1057,8 @@ function folderSheet(f) {
       };
       form.append(name, sw, err, actions);
       if (f) {
-        const delBtn = el('button', 'menu-item danger');
+        // red bubble under the buttons, as wide as both of them together
+        const delBtn = el('button', 'danger-fill wide-btn');
         delBtn.type = 'button';
         delBtn.innerHTML = icon('trash');
         delBtn.append('Obriši mapu');

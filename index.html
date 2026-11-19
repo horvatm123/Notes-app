@@ -22,6 +22,7 @@
     r.dataset.font = s.font === 'sans' ? 'system' : (s.font || 'dm');
     r.dataset.size = s.size || 'l';
     r.dataset.accent = s.accent || 'blue';
+    document.querySelector('meta[name="theme-color"]').content = dark ? '#0e0e11' : '#f4f5f9';
   })();
 </script>
 <link rel="preload" href="fonts/dm-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
