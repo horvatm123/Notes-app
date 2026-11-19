@@ -1,6 +1,6 @@
 # Bilješke (Notes-app)
 
-Private notes app for personal, day-to-day use. Version **1.4.0**.
+Private notes app for personal, day-to-day use. Version **1.4.1**.
 
 Live: https://horvatm123.github.io/Notes-app/
 

@@ -2,26 +2,30 @@
 
 const $ = id => document.getElementById(id);
 // folder colors (bright); OLD_COLORS are the softer ones from v1.0, converted on start
-// v1.4.0: brown added at the end (the order of the first 8 must stay, OLD_COLORS map to them by position)
-const COLORS = ['#ff2d3d', '#ff7a00', '#ffc400', '#00c853', '#00b8d4', '#2f6bff', '#9b3dff', '#ff2d8a', '#a0622d'];
+// v1.4.0: brown and white added at the end (the order of the first 8 must stay, OLD_COLORS map to them by position)
+const WHITE = '#ffffff';
+const COLORS = ['#ff2d3d', '#ff7a00', '#ffc400', '#00c853', '#00b8d4', '#2f6bff', '#9b3dff', '#ff2d8a', '#a0622d', WHITE];
+// color for drawing a folder: white is shown light grey in the light theme, otherwise it would not be visible
+const fcol = c => c === WHITE ? 'var(--folder-white)' : c;
 const OLD_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
 const ACCENTS = [['blue', '#2f6bff', 'Plava'], ['purple', '#8a3dff', 'Ljubičasta'], ['pink', '#f0287a', 'Ružičasta'],
   ['red', '#ee2b3b', 'Crvena'], ['orange', '#ff6a00', 'Narančasta'], ['green', '#00a651', 'Zelena'], ['teal', '#009d9a', 'Tirkizna'],
   ['brown', '#a0622d', 'Smeđa']];
 const DEFAULT_SETTINGS = { theme: 'system', accent: 'blue', font: 'dm', size: 'l' };
 // formatting options; names map to CSS variables (--t-*, --h-*) so dark mode can adjust them
-const TEXT_COLORS = [['red', 'Crvena'], ['blue', 'Plava'], ['green', 'Zelena'], ['yellow', 'Žuta'], ['orange', 'Narančasta'], ['purple', 'Ljubičasta'], ['pink', 'Ružičasta']];
+const TEXT_COLORS = [['red', 'Crvena'], ['blue', 'Plava'], ['green', 'Zelena'], ['yellow', 'Žuta'], ['orange', 'Narančasta'], ['purple', 'Ljubičasta'], ['brown', 'Smeđa'], ['white', 'Bijela']];
 const HL_COLORS = TEXT_COLORS;
 const UL_COLORS = [['fg', 'Obična'], ...TEXT_COLORS];
 const SIZES = [['s', 'Mala', '.85em'], ['', 'Normalna', '1em'], ['l', 'Velika', '1.25em'], ['xl', 'Najveća', '1.55em']];
 const LISTS = [['bullet', '•', 'Točke'], ['number', '1.', 'Brojevi'], ['dash', '–', 'Crtice'], ['arrow', '→', 'Strelice']];
 const STYLE_VALUES = {
-  'data-c': new Set(TEXT_COLORS.map(c => c[0])),
-  'data-h': new Set(HL_COLORS.map(c => c[0])),
-  'data-u': new Set(UL_COLORS.map(c => c[0])),
+  // 'pink' was in the first build of 1.4.0; kept so text colored with it is not lost
+  'data-c': new Set([...TEXT_COLORS.map(c => c[0]), 'pink']),
+  'data-h': new Set([...HL_COLORS.map(c => c[0]), 'pink']),
+  'data-u': new Set([...UL_COLORS.map(c => c[0]), 'pink']),
   'data-fs': new Set(['s', 'l', 'xl']),
 };
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.4.1';
 const MAX_IMG = 1280;          // longest image side in px after resizing
 const SAVE_DELAY = 500;        // ms of inactivity before autosave
 const KDF_ITERATIONS = 600000; // PBKDF2 rounds: makes PIN guessing slow
@@ -707,10 +711,10 @@ function renderTabs() {
   home.innerHTML = icon('home');
   for (const f of folders) {
     const b = tab(f.id, 'Mapa ' + f.name);
-    b.style.setProperty('--tab-color', f.color);
+    b.style.setProperty('--tab-color', fcol(f.color));
     b.style.setProperty('--tab-fg', textOn(f.color));
     const d = el('span', 'dot');
-    d.style.background = f.color;
+    d.style.background = fcol(f.color);
     b.append(d, el('span', 'label', f.name));
     if (f.locked) b.insertAdjacentHTML('beforeend', `<span class="mini">${icon(openFolderId === f.id ? 'unlock' : 'lock')}</span>`);
   }
@@ -789,7 +793,7 @@ function metaLine(n, f, showFolder, withDot) {
   const date = el('span', null, formatDate(createdOf(n)));
   if (f && withDot) {
     const d = el('span', 'dot');
-    d.style.background = f.color;
+    d.style.background = fcol(f.color);
     date.prepend(d);
   }
   m.append(date);
@@ -804,7 +808,7 @@ function noteCard(n) {
   const f = folderById(n.folderId);
   if (f) {
     card.classList.add('in-folder');
-    card.style.setProperty('--fc', f.color);
+    card.style.setProperty('--fc', fcol(f.color));
   }
   if (selected.has(n.id)) card.classList.add('sel');
   const check = el('span', 'sel-check');
@@ -1075,7 +1079,7 @@ async function openDrawer() {
   for (const f of folders) {
     const r = row(filter === f.id);
     const d = el('span', 'dot');
-    d.style.background = f.color;
+    d.style.background = fcol(f.color);
     const pick = pickBtn(d, f.name, count(f.id), closeThen(() => goTo(f.id)));
     if (f.locked) pick.querySelector('.label').insertAdjacentHTML('afterend', `<span class="mini">${icon('lock')}</span>`);
     r.append(pick);
@@ -1182,6 +1186,7 @@ function folderSheet(f) {
           const b = el('button', 'sw' + (c === cur.color ? ' sel' : ''));
           b.type = 'button';
           b.style.background = c;
+          if (c === WHITE) b.classList.add('white');
           b.setAttribute('aria-label', 'Boja ' + c);
           b.onclick = () => { cur.color = c; draw(); };
           sw.append(b);
@@ -1255,7 +1260,7 @@ async function openAllFolders() {
     tile('var(--accent)', 'home', 'Bilješke', notesCount(notes.filter(n => !n.folderId).length), filter === 'home', open('home'));
     tile('var(--muted)', 'notes', 'Sve bilješke', notesCount(notes.filter(n => !folderHidden(n.folderId)).length), filter === 'all', open('all'));
     for (const f of folders) {
-      const t = tile(f.color, 'folder', f.name, notesCount(notes.filter(n => n.folderId === f.id).length), filter === f.id, open(f.id));
+      const t = tile(fcol(f.color), 'folder', f.name, notesCount(notes.filter(n => n.folderId === f.id).length), filter === f.id, open(f.id));
       if (f.locked) t.querySelector('.ft-icon').insertAdjacentHTML('beforeend', icon('lock'));
     }
     const add = tile('var(--accent)', 'plus', 'Nova mapa', null, false, createFolder);
@@ -1394,7 +1399,7 @@ function openMoveSheet(list, done) {
     const go = f => moveNotes(list, f, done);
     const items = [{ icon: 'notes', label: 'Bez mape', checked: one && !one.folderId, onClick: () => go(null) }];
     for (const f of folders)
-      items.push({ dot: f.color, label: f.name, sub: f.locked ? 'zaključana' : '', checked: one && one.folderId === f.id, onClick: () => go(f) });
+      items.push({ dot: fcol(f.color), label: f.name, sub: f.locked ? 'zaključana' : '', checked: one && one.folderId === f.id, onClick: () => go(f) });
     items.push({
       icon: 'plus', label: 'Premjesti u novu mapu…', accent: true,
       onClick: async () => { const f = await folderSheet(); if (f) await go(f); },
@@ -2275,10 +2280,11 @@ function openPanel(cmd) {
       if (cmd === 'underline') {      // underline: show a "U" underlined in that color
         b.classList.add('u-swatch');
         b.textContent = 'U';
-        b.style.textDecoration = `underline 3px var(--t-${v})`;
+        b.style.textDecoration = `underline 3px var(--${v === 'white' ? 'u' : 't'}-${v})`;
         b.style.textUnderlineOffset = '4px';
       } else {
         b.style.background = `var(--${cmd === 'highlight' ? 'h' : 't'}-${v})`;
+        if (v === 'white') b.classList.add('white');
       }
     }
   }
