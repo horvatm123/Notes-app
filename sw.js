@@ -1,7 +1,7 @@
 // Service worker: keeps the app files in a cache so the app works offline.
 // Strategy "stale-while-revalidate": answer from cache instantly,
 // then fetch a fresh copy in the background for the next start.
-const CACHE = 'biljeske-v8';
+const CACHE = 'biljeske-v9';
 const ASSETS = [
   './',
   './index.html',
@@ -10,6 +10,10 @@ const ASSETS = [
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',
+  './fonts/dm-sans-latin-wght-normal.woff2',
+  './fonts/dm-sans-latin-wght-italic.woff2',
+  './fonts/dm-sans-latin-ext-wght-normal.woff2',
+  './fonts/dm-sans-latin-ext-wght-italic.woff2',
   './fonts/source-serif-4-latin-wght-normal.woff2',
   './fonts/source-serif-4-latin-wght-italic.woff2',
   './fonts/source-serif-4-latin-ext-wght-normal.woff2',

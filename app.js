@@ -6,7 +6,7 @@ const COLORS = ['#ff2d3d', '#ff7a00', '#ffc400', '#00c853', '#00b8d4', '#2f6bff'
 const OLD_COLORS = ['#ef4444', '#f97316', '#eab308', '#22c55e', '#06b6d4', '#3b82f6', '#8b5cf6', '#ec4899'];
 const ACCENTS = [['blue', '#2f6bff', 'Plava'], ['purple', '#8a3dff', 'Ljubičasta'], ['pink', '#f0287a', 'Ružičasta'],
   ['red', '#ee2b3b', 'Crvena'], ['orange', '#ff6a00', 'Narančasta'], ['green', '#00a651', 'Zelena'], ['teal', '#009d9a', 'Tirkizna']];
-const DEFAULT_SETTINGS = { theme: 'system', accent: 'blue', font: 'serif', size: 'l', dateMode: 'updated' };
+const DEFAULT_SETTINGS = { theme: 'system', accent: 'blue', font: 'dm', size: 'l' };
 // formatting options; names map to CSS variables (--t-*, --h-*) so dark mode can adjust them
 const TEXT_COLORS = [['red', 'Crvena'], ['blue', 'Plava'], ['green', 'Zelena'], ['yellow', 'Žuta'], ['orange', 'Narančasta'], ['purple', 'Ljubičasta']];
 const HL_COLORS = TEXT_COLORS;
@@ -19,7 +19,7 @@ const STYLE_VALUES = {
   'data-u': new Set(UL_COLORS.map(c => c[0])),
   'data-fs': new Set(['s', 'l', 'xl']),
 };
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.2.0';
 const MAX_IMG = 1280;          // longest image side in px after resizing
 const SAVE_DELAY = 500;        // ms of inactivity before autosave
 const KDF_ITERATIONS = 600000; // PBKDF2 rounds: makes PIN guessing slow
@@ -56,7 +56,7 @@ const ICONS = {
   highlight: '<path d="M14.5 4.5l5 5-8 8H7v-4.5z"/><path d="M12 7l5 5"/>',
   home: '<path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h11V9.5"/><path d="M10 20v-5h4v5"/>',
   folders: '<path d="M3 8.5a2 2 0 0 1 2-2h3.5l1.8 1.8H16a2 2 0 0 1 2 2V16a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M6.5 4.5h3l1.5 1.5h7a2.5 2.5 0 0 1 2.5 2.5v6"/>',
-  settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2.8v2.4M12 18.8v2.4M2.8 12h2.4M18.8 12h2.4M5.5 5.5l1.7 1.7M16.8 16.8l1.7 1.7M5.5 18.5l1.7-1.7M16.8 7.2l1.7-1.7"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M10.3 3.2h3.4l.5 2.4 1.7.9 2.2-1 2.4 2.4-1 2.2.9 1.7 2.4.5v3.4l-2.4.5-.9 1.7 1 2.2-2.4 2.4-2.2-1-1.7.9-.5 2.4h-3.4l-.5-2.4-1.7-.9-2.2 1-2.4-2.4 1-2.2-.9-1.7-2.4-.5v-3.4l2.4-.5.9-1.7-1-2.2 2.4-2.4 2.2 1 1.7-.9z"/>',
   cloud: '<path d="M7 18.5h10.5a4 4 0 0 0 .4-8 6 6 0 0 0-11.5 1.6A3.3 3.3 0 0 0 7 18.5z"/>',
   apps: '<rect x="4" y="4" width="7" height="7" rx="2"/><rect x="13" y="4" width="7" height="7" rx="2"/><rect x="4" y="13" width="7" height="7" rx="2"/><path d="M16.5 13.5v6M13.5 16.5h6"/>',
   phone: '<rect x="6.5" y="3" width="11" height="18" rx="2.5"/><path d="M10.5 18h3"/>',
@@ -102,6 +102,8 @@ function savePref(key, value) {
 function loadSettings() {
   let s = {};
   try { s = JSON.parse(loadPref('settings', '{}')) || {}; } catch { /* ignore */ }
+  if (s.font === 'sans') s.font = 'system';       // v1.1.0 name of the system font
+  delete s.dateMode;                             // removed in v1.2.0: cards always show the creation date
   return { ...DEFAULT_SETTINGS, ...s };
 }
 
@@ -178,17 +180,21 @@ function show(v) {
   }
 }
 
-// "19. 11. · 14:35", with the year when it is not the current one
+// "19. 11.", with the year when it is not the current one
+function formatDay(ts) {
+  const d = new Date(ts);
+  let date = `${d.getDate()}. ${d.getMonth() + 1}.`;
+  if (d.getFullYear() !== new Date().getFullYear()) date += ` ${d.getFullYear()}.`;
+  return date;
+}
+// "19. 11. u 14:35"
 function formatDate(ts) {
   const d = new Date(ts);
   const pad = n => String(n).padStart(2, '0');
-  let date = `${d.getDate()}. ${d.getMonth() + 1}.`;
-  if (d.getFullYear() !== new Date().getFullYear()) date += ` ${d.getFullYear()}.`;
-  return `${date} · ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${formatDay(ts)} u ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+// cards show when the note was created; v1.0 notes have no creation time, so their last edit is used
 const createdOf = n => n.created || n.updated;
-// time used for the cards (and their order), chosen in the settings
-const shownTime = n => (settings.dateMode === 'created' ? createdOf(n) : n.updated);
 
 // Convert old plain-text notes (from the first version) to HTML
 function textToHtml(text) {
@@ -727,11 +733,11 @@ async function render() {
   if (q) {                                    // search covers all folders
     scores = searchNotes(notes, q);
     notes = notes.filter(n => scores.has(n.id));
-    notes.sort((a, b) => scores.get(b.id) - scores.get(a.id) || shownTime(b) - shownTime(a));
+    notes.sort((a, b) => scores.get(b.id) - scores.get(a.id) || b.updated - a.updated);
   } else {
     if (filter === 'home') notes = notes.filter(n => !n.folderId);
     else if (filter !== 'all') notes = notes.filter(n => n.folderId === filter);
-    notes.sort((a, b) => shownTime(b) - shownTime(a));
+    notes.sort((a, b) => b.updated - a.updated);   // last edited on top
   }
 
   const list = $('list');
@@ -770,15 +776,15 @@ function moreButton(n) {
 
 function metaLine(n, f, showFolder, withDot) {
   const m = el('div', 'meta');
+  const date = el('span', null, formatDate(createdOf(n)));
   if (f && withDot) {
     const d = el('span', 'dot');
     d.style.background = f.color;
-    m.append(d);
+    date.prepend(d);
   }
-  const parts = [formatDate(shownTime(n))];
-  if (f && showFolder) parts.push(f.name);
-  if (n.images) parts.push(n.images === 1 ? '1 slika' : n.images + ' slike');
-  m.append(parts.join(' · '));
+  m.append(date);
+  if (f && showFolder) m.append(el('span', null, f.name));
+  if (n.images) m.append(el('span', null, n.images === 1 ? '1 slika' : n.images + ' slike'));
   return m;
 }
 
@@ -941,7 +947,7 @@ async function openDrawer() {
   const last = Number(loadPref('lastBackup', 0));
   const exp = row(false);
   exp.append(pickBtn('download', 'Izvezi kopiju', null, closeThen(openExportSheet)));
-  exp.querySelector('.pick').append(el('span', 'count', last ? formatDate(last).split(' · ')[0] : 'nikad'));
+  exp.querySelector('.pick').append(el('span', 'count', last ? formatDay(last) : 'nikad'));
   const imp = row(false);
   imp.append(pickBtn('upload', 'Uvezi', null, closeThen(openImportSheet)));
   box.append(set, exp, imp, el('p', 'version', 'Bilješke · verzija ' + APP_VERSION));
@@ -998,10 +1004,8 @@ function openSettings() {
     }
     group('Boja naglaska').append(acc);
 
-    seg('Font bilješki', 'font', [['serif', 'Serif (kao Claude)', 'serif'], ['sans', 'Obični', 'sans']]);
+    seg('Font', 'font', [['dm', 'DM Sans', 'f-dm'], ['serif', 'Serif', 'f-serif'], ['system', 'Sustavski', 'f-system']]);
     seg('Veličina teksta', 'size', [['m', 'Normalna'], ['l', 'Veća'], ['xl', 'Najveća']]);
-    seg('Datum i redoslijed bilješki', 'dateMode', [['updated', 'Zadnja izmjena'], ['created', 'Stvoreno']],
-      () => { animateList = true; render(); });
   });
 }
 
@@ -1011,6 +1015,7 @@ function openSettings() {
 function folderSheet(f) {
   return new Promise(resolve => {
     let saved = null;
+    let wantDelete = false;
     const cur = f ? { ...f } : { id: crypto.randomUUID(), name: '', color: COLORS[5], created: Date.now() };
     showSheet(sh => {
       const form = el('form', 'pw-form');
@@ -1050,9 +1055,20 @@ function folderSheet(f) {
         await closeSheet();
       };
       form.append(name, sw, err, actions);
+      if (f) {
+        const delBtn = el('button', 'menu-item danger');
+        delBtn.type = 'button';
+        delBtn.innerHTML = icon('trash');
+        delBtn.append('Obriši mapu');
+        delBtn.onclick = () => { wantDelete = true; back(); };
+        form.append(delBtn);
+      }
       sh.append(form);
       if (!f) setTimeout(() => name.focus(), 80);
-    }, () => resolve(saved));
+    }, () => {
+      resolve(saved);
+      if (wantDelete) deleteFolder(f);      // asks for confirmation in the next sheet
+    });
   });
 }
 
@@ -1108,6 +1124,7 @@ function openFolderMenu() {
       f.locked
         ? { icon: 'unlock', label: 'Otključaj mapu', onClick: () => unlockFolder(f) }
         : { icon: 'lock', label: 'Zaključaj mapu', onClick: () => lockFolder(f) },
+      { icon: 'download', label: 'Izvezi mapu', onClick: () => openExportSheet(f) },
       { icon: 'trash', label: 'Obriši mapu', danger: true, onClick: () => deleteFolder(f) },
     ]));
   });
@@ -1359,12 +1376,15 @@ const backupReviver = (k, v) =>
 
 const today = () => new Date().toISOString().slice(0, 10);
 
-function openExportSheet() {
+// folder: export only that folder; without it everything is exported
+function openExportSheet(folder) {
   let encrypt = loadPref('encryptBackup', '1') === '1';
   showSheet(sh => {
     const box = el('div', 'pw-form');
-    box.append(el('h3', null, 'Izvezi kopiju'),
-      el('p', null, 'Kopija sadrži sve bilješke i mape. Spremi je na Google Drive pa je imaš i ako izgubiš ili promijeniš mobitel.'));
+    box.append(el('h3', null, folder ? `Izvezi mapu „${folder.name}”` : 'Izvezi kopiju'),
+      el('p', null, folder
+        ? 'Datoteka sadrži sve bilješke iz ove mape. Uvoz (☰ → Uvezi) ih vraća u istu mapu.'
+        : 'Kopija sadrži sve bilješke i mape. Spremi je na Google Drive pa je imaš i ako izgubiš ili promijeniš mobitel.'));
     const tr = el('div', 'toggle-row');
     const txt = el('div', 'txt', 'Šifriraj PIN-om');
     txt.append(el('small', null, 'Bez PIN-a nitko ne može pročitati kopiju. Bez šifriranja su otvorene bilješke čitljive.'));
@@ -1383,17 +1403,21 @@ function openExportSheet() {
     sh.append(box);
     const items = [];
     if (navigator.canShare)
-      items.push({ icon: 'cloud', label: 'Spremi u Google Drive…', sub: 'ili drugdje', onClick: () => exportBackup('share', encrypt) });
-    items.push({ icon: 'phone', label: 'Spremi na uređaj', sub: 'Preuzimanja', onClick: () => exportBackup('download', encrypt) });
+      items.push({ icon: 'cloud', label: 'Spremi u Google Drive…', sub: 'ili drugdje', onClick: () => exportBackup('share', encrypt, folder) });
+    items.push({ icon: 'phone', label: 'Spremi na uređaj', sub: 'Preuzimanja', onClick: () => exportBackup('download', encrypt, folder) });
     sh.append(menuList(items));
   });
 }
 
-async function buildBackup(encrypt) {
+async function buildBackup(encrypt, folder) {
   const data = {
     app: 'biljeske', format: 1, version: APP_VERSION, exported: Date.now(),
     notes: await getAll('notes'), folders: await getAll('folders'), meta: await getAll('meta'),
   };
+  if (folder) {                 // the PIN check (meta) stays, locked notes need it
+    data.notes = data.notes.filter(n => n.folderId === folder.id);
+    data.folders = data.folders.filter(f => f.id === folder.id);
+  }
   let json = JSON.stringify(data, backupReplacer);
   if (encrypt) {
     const key = await getLockKey('Šifriraj kopiju', true);    // sets up a PIN if there is none yet
@@ -1420,12 +1444,14 @@ function downloadFile(file) {
   setTimeout(() => URL.revokeObjectURL(a.href), 30000);
 }
 
-async function exportBackup(how, encrypt) {
+async function exportBackup(how, encrypt, folder) {
   savePref('encryptBackup', encrypt ? '1' : '0');
   await closeSheet();
-  const json = await buildBackup(encrypt);
+  const json = await buildBackup(encrypt, folder);
   if (!json) return;
-  const base = `biljeske-kopija-${today()}${encrypt ? '-sifrirano' : ''}`;
+  // file name: biljeske-kopija-2026-11-19 or biljeske-mapa-posao-2026-11-19
+  const slug = folder ? 'mapa-' + (norm(folder.name).replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'mapa') : 'kopija';
+  const base = `biljeske-${slug}-${today()}${encrypt ? '-sifrirano' : ''}`;
   const file = new File([json], base + '.json', { type: 'application/json' });
   if (how === 'share') {
     // Android does not share .json files, so a .txt with the same content is used there (import accepts both)
@@ -1433,8 +1459,8 @@ async function exportBackup(how, encrypt) {
     try {
       if (!navigator.canShare({ files: [shareFile] })) throw new Error('files');
       await navigator.share({ files: [shareFile], title: shareFile.name });
-      savePref('lastBackup', String(Date.now()));
-      toast('Kopija je poslana');
+      if (!folder) savePref('lastBackup', String(Date.now()));
+      toast(folder ? 'Mapa je poslana' : 'Kopija je poslana');
       return;
     } catch (e) {
       if (e.name === 'AbortError') return;
@@ -1442,8 +1468,8 @@ async function exportBackup(how, encrypt) {
     }
   }
   downloadFile(file);
-  savePref('lastBackup', String(Date.now()));
-  if (how !== 'share') toast('Kopija je spremljena u Preuzimanja');
+  if (!folder) savePref('lastBackup', String(Date.now()));
+  if (how !== 'share') toast((folder ? 'Mapa je spremljena' : 'Kopija je spremljena') + ' u Preuzimanja');
 }
 
 /* ---- Import: own backups, Google Keep (Takeout .zip / .json), text files ---- */
@@ -1793,22 +1819,12 @@ function openEditor(n, key) {
   $('body').innerHTML = sanitize(noteHtml(current));
   $('saveState').textContent = '';
   $('lockBadge').hidden = !currentKey;
-  showDates();
   showTools(false);
 
   pushLayer(closeEditor);
   show('editor');
   window.scrollTo(0, 0);
   if (!n) $('title').focus();
-}
-
-// "Stvoreno 18. 11. · 14:32 · Uređeno 19. 11. · 09:10"
-function showDates() {
-  if (!current) return;
-  const c = createdOf(current);
-  const parts = ['Stvoreno ' + formatDate(c)];
-  if (current.updated - c > 60000) parts.push('Uređeno ' + formatDate(current.updated));
-  $('noteDates').textContent = parts.join('  ·  ');
 }
 
 async function closeEditor() {
@@ -1852,7 +1868,6 @@ async function saveCurrent() {
   }
   await put('notes', record);
   $('saveState').textContent = 'Spremljeno';
-  showDates();
 }
 
 // "Spremi": save everything now and go back to the list
